@@ -1,0 +1,6 @@
+libasound2-dev
+espeak
+libespeak-dev
+libdbus-1-dev
+libgl1-mesa-glx
+libglib2.0-0

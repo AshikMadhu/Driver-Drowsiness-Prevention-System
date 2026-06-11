@@ -6,6 +6,9 @@ import pandas as pd
 from pathlib import Path
 from collections import deque
 from config import config
+import threading
+import av
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 
 # Add root folder to python path to resolve imports
 import sys
@@ -104,6 +107,126 @@ def draw_landmark_overlays(frame: cv2.Mat, face_landmarks: Any):
             landmark_drawing_spec=None,
             connection_drawing_spec=iris_spec
         )
+
+class DriverSafetyVideoProcessor(VideoProcessorBase):
+    """Asynchronous WebRTC Video Processor for real-time driver telemetry evaluation."""
+    def __init__(self, sys_components, ear_th, mar_th, gaze_th):
+        self.detector = sys_components["face_detector"]
+        self.extractor = sys_components["landmark_extractor"]
+        self.state_mgr = sys_components["state_manager"]
+        self.notifier = sys_components["notification_service"]
+        
+        self.eye_dec = EyeDetector(ear_threshold=ear_th)
+        self.yawn_dec = YawnDetector(mar_threshold=mar_th)
+        self.pose_dec = HeadPoseDetector(deviation_threshold=gaze_th)
+        self.risk_engine = RiskEngine(
+            window_size=10, 
+            head_drop_threshold=-12.0, 
+            distraction_threshold=gaze_th
+        )
+        
+        self.lock = threading.Lock()
+        
+        # Telemetry metrics read by UI thread
+        self.last_ear = 0.28
+        self.last_mar = 0.12
+        self.last_pitch = 0.0
+        self.last_yaw = 0.0
+        self.last_roll = 0.0
+        self.last_score = 0
+        self.last_level = "Safe"
+        
+        # Session parameters set dynamically by UI thread
+        self.session_id = None
+        self.username = "default_driver"
+
+    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+        try:
+            img = frame.to_ndarray(format="bgr24")
+            h, w, _ = img.shape
+            
+            with self.lock:
+                session_id = self.session_id
+                username = self.username
+                
+            # 1. Process facial landmarks
+            results = self.detector.process_frame(img)
+            
+            risk_level = "Safe"
+            raw_score = 0
+            avg_ear = 0.28
+            mar = 0.12
+            pitch = 0.0
+            yaw = 0.0
+            roll = 0.0
+            p1, p2 = None, None
+            
+            if results and results.multi_face_landmarks:
+                face_landmarks = results.multi_face_landmarks[0]
+                features = self.extractor.extract(face_landmarks, w, h)
+                
+                if features:
+                    # 2. Extract metrics
+                    eye_results = self.eye_dec.process(features["left_eye"], features["right_eye"])
+                    avg_ear = eye_results["avg_ear"]
+                    
+                    yawn_results = self.yawn_dec.process(features["mouth"])
+                    mar = yawn_results["mar"]
+                    
+                    pose_results = self.pose_dec.process(features["head_pose_points"], w, h)
+                    pitch = pose_results["pitch"]
+                    yaw = pose_results["yaw"]
+                    roll = pose_results["roll"]
+                    p1 = pose_results["nose_tip_center"]
+                    p2 = pose_results["nose_projected_tip"]
+                    
+                    # 3. Process Risk Score & Transitions
+                    risk_res = self.risk_engine.process(
+                        eye_results["closure_duration"], 
+                        yawn_results["yawn_duration"], 
+                        pose_results["head_down_duration"], 
+                        pose_results["yaw_distraction_duration"]
+                    )
+                    raw_score = risk_res["raw_score"]
+                    
+                    # Update DB states
+                    risk_level = self.state_mgr.update_risk_state(
+                        risk_res, avg_ear, mar, pitch, yaw, roll
+                    )
+                    
+                    # Process notifications
+                    self.notifier.process_risk_state(
+                        username, risk_level, risk_res["indicators"], 
+                        avg_ear, mar, pitch, yaw,
+                        frame=img, session_id=session_id
+                    )
+                    
+                    # Render overlays
+                    draw_landmark_overlays(img, face_landmarks)
+                    if p1 and p2:
+                        cv2.line(img, p1, p2, (0, 255, 255), 2)
+                        cv2.circle(img, p1, 3, (0, 0, 255), -1)
+            else:
+                # Normal silent safe state
+                self.notifier.process_risk_state(
+                    username, "Safe", {"eye_closure": False, "yawn": False, "distraction": False},
+                    0.28, 0.12, 0.0, 0.0
+                )
+                
+            # 4. Save telemetry thread-safely
+            with self.lock:
+                self.last_ear = avg_ear
+                self.last_mar = mar
+                self.last_pitch = pitch
+                self.last_yaw = yaw
+                self.last_roll = roll
+                self.last_score = raw_score
+                self.last_level = risk_level
+                
+            return av.VideoFrame.from_ndarray(img, format="bgr24")
+        except Exception as e:
+            logger.error(f"Error in WebRTC video processing thread: {e}")
+            return frame
 
 def run_dashboard():
     # Page settings
@@ -255,168 +378,95 @@ def run_dashboard():
         emergency_placeholder = st.empty()
         historical_placeholder = st.empty()
 
-    # --- SIMULATE / RUN WEBCAM ACTIVE MONITORING ---
+    # --- RUN WEBCAM ACTIVE MONITORING VIA WEBRTC ---
     if st.session_state.active_session:
-        # Instantiate detectors inside session scope
-        cam_mgr = CameraManager(
-            source=config.camera_source,
-            width=config.frame_width,
-            height=config.frame_height
-        )
-        cam_mgr.start()
-        
-        # Instantiate localized Risk Engine matching sidebar settings
-        risk_engine = RiskEngine(
-            window_size=10, 
-            head_drop_threshold=-12.0, 
-            distraction_threshold=gaze_threshold
+        # RTC configuration using a public Google STUN server
+        RTC_CONFIGURATION = RTCConfiguration(
+            {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
         )
         
-        # Re-fetch trackers
-        eye_dec = EyeDetector(ear_threshold=ear_threshold)
-        yawn_dec = YawnDetector(mar_threshold=mar_threshold)
-        pose_dec = HeadPoseDetector(deviation_threshold=gaze_threshold)
+        with col_left:
+            # We display the WebRTC streamer widget directly inside the left column
+            ctx = webrtc_streamer(
+                key="driver-safety-streamer",
+                mode=WebRtcMode.SENDRECV,
+                rtc_configuration=RTC_CONFIGURATION,
+                video_processor_factory=lambda: DriverSafetyVideoProcessor(
+                    sys_components, ear_threshold, mar_threshold, gaze_threshold
+                ),
+                media_stream_constraints={"video": True, "audio": False},
+                async_processing=True,
+            )
         
-        try:
-            while st.session_state.active_session:
-                # 1. Grab camera frame
-                ret, frame = cam_mgr.read()
-                if not ret or frame is None:
-                    time.sleep(0.01)
-                    continue
+        if ctx.state.playing:
+            # Propagate session details to the background video processor thread
+            ctx.video_processor.session_id = st.session_state.session_id
+            ctx.video_processor.username = username
+            
+            try:
+                # Non-blocking UI refresh loop that polls processor metrics and updates dashboard widgets
+                while ctx.state.playing and st.session_state.active_session:
+                    # Thread-safe read of calculated driver safety telemetry
+                    with ctx.video_processor.lock:
+                        ear = ctx.video_processor.last_ear
+                        mar = ctx.video_processor.last_mar
+                        score = ctx.video_processor.last_score
+                        risk_level = ctx.video_processor.last_level
                     
-                h, w, _ = frame.shape
-                
-                # 2. Extract facial mesh landmarks
-                results = detector.process_frame(frame)
-                
-                # Default values for GUI rendering
-                risk_level = "Safe"
-                raw_score = 0
-                avg_ear = 0.28
-                mar = 0.12
-                pitch = 0.0
-                yaw = 0.0
-                roll = 0.0
-                is_closed = False
-                is_yawning = False
-                is_distracted = False
-                p1, p2 = None, None
-                
-                if results and results.multi_face_landmarks:
-                    face_landmarks = results.multi_face_landmarks[0]
-                    features = extractor.extract(face_landmarks, w, h)
+                    # Update deque history for Plotly visualizations
+                    st.session_state.ear_history.append(ear)
+                    st.session_state.mar_history.append(mar)
                     
-                    if features:
-                        # 3. Calculations
-                        eye_results = eye_dec.process(features["left_eye"], features["right_eye"])
-                        avg_ear = eye_results["avg_ear"]
-                        is_closed = eye_results["is_closed"]
-                        
-                        yawn_results = yawn_dec.process(features["mouth"])
-                        mar = yawn_results["mar"]
-                        is_yawning = yawn_results["is_yawning"]
-                        
-                        pose_results = pose_dec.process(features["head_pose_points"], w, h)
-                        pitch = pose_results["pitch"]
-                        yaw = pose_results["yaw"]
-                        roll = pose_results["roll"]
-                        is_distracted = pose_results["is_distracted"]
-                        p1 = pose_results["nose_tip_center"]
-                        p2 = pose_results["nose_projected_tip"]
-                        
-                        # Update deque history for graphs
-                        st.session_state.ear_history.append(avg_ear)
-                        st.session_state.mar_history.append(mar)
-                        
-                        # 4. Risk Analysis (Duration-based alerts for eye closure and distractions)
-                        risk_res = risk_engine.process(
-                            eye_results["closure_duration"], 
-                            yawn_results["yawn_duration"], 
-                            pose_results["head_down_duration"], 
-                            pose_results["yaw_distraction_duration"]
-                        )
-                        raw_score = risk_res["raw_score"]
-                        
-                        # Update DB telemetry states
-                        risk_level = state_mgr.update_risk_state(
-                            risk_res, avg_ear, mar, pitch, yaw, roll
-                        )
-                        
-                        # Trigger Alerts framework updates
-                        notifier.process_risk_state(
-                            username, risk_level, risk_res["indicators"], 
-                            avg_ear, mar, pitch, yaw,
-                            frame=frame, session_id=st.session_state.session_id
-                        )
-                        
-                        # Draw vector & points on video BGR frame
-                        draw_landmark_overlays(frame, face_landmarks)
-                        if p1 and p2:
-                            cv2.line(frame, p1, p2, (0, 255, 255), 2)
-                            cv2.circle(frame, p1, 3, (0, 0, 255), -1)
-                else:
-                    # Append default values to keep graph moving
-                    st.session_state.ear_history.append(0.28)
-                    st.session_state.mar_history.append(0.12)
-                    # Alert notifier of normal state (silent)
-                    notifier.process_risk_state(
-                        username, "Safe", {"eye_closure": False, "yawn": False, "distraction": False},
-                        0.28, 0.12, 0.0, 0.0
+                    # A. Plotly Trend Chart Update
+                    fig = create_realtime_metrics_plot(
+                        list(st.session_state.ear_history),
+                        list(st.session_state.mar_history),
+                        ear_threshold,
+                        mar_threshold
                     )
-                
-                # --- Update Dashboard Placeholders ---
-                # A. Live Camera Feed
-                video_placeholder.image(frame, channels="BGR", width="stretch")
-                
-                # B. Plotly Trend Chart
-                fig = create_realtime_metrics_plot(
-                    list(st.session_state.ear_history),
-                    list(st.session_state.mar_history),
-                    ear_threshold,
-                    mar_threshold
-                )
-                chart_placeholder.plotly_chart(fig, width="stretch", key=f"trend_chart_{time.time()}")
-                
-                # C. Metrics Column updates
-                session_time = time.time() - st.session_state.start_time
-                mins, secs = divmod(int(session_time), 60)
-                duration_str = f"{mins:02d}:{secs:02d}"
-                
-                # Fetch ML Fatigue Prediction results
-                pred_res = pred_service.evaluate_session_fatigue(st.session_state.session_id)
-                fatigue_prob = pred_res["fatigue_probability"]
-                pred_label = pred_res["prediction_label"]
-                
-                with cards_placeholder.container():
-                    st.markdown(render_risk_card(risk_level), unsafe_allow_html=True)
+                    chart_placeholder.plotly_chart(fig, width="stretch", key=f"trend_chart_{time.time()}")
                     
-                    # Columns for other metrics (3 columns)
-                    mc1, mc2, mc3 = st.columns(3)
-                    with mc1:
-                        st.markdown(render_styled_card("Risk Score", f"{raw_score} / 6", "Maximum: 6"), unsafe_allow_html=True)
-                    with mc2:
-                        prob_pct = f"{fatigue_prob * 100:.0f}%"
-                        theme = "red" if fatigue_prob > 0.5 else "green"
-                        st.markdown(render_styled_card("Fatigue Forecast", prob_pct, f"ML Status: {pred_label}", theme), unsafe_allow_html=True)
-                    with mc3:
-                        st.markdown(render_styled_card("Session Timer", duration_str, "Active Monitoring"), unsafe_allow_html=True)
+                    # B. Duration Timer Calculations
+                    session_time = time.time() - st.session_state.start_time
+                    mins, secs = divmod(int(session_time), 60)
+                    duration_str = f"{mins:02d}:{secs:02d}"
+                    
+                    # C. ML Fatigue Forecast Query
+                    pred_res = pred_service.evaluate_session_fatigue(st.session_state.session_id)
+                    fatigue_prob = pred_res["fatigue_probability"]
+                    pred_label = pred_res["prediction_label"]
+                    
+                    # D. Render Telemetry Cards
+                    with cards_placeholder.container():
+                        st.markdown(render_risk_card(risk_level), unsafe_allow_html=True)
                         
-                # D. Emergency dispatch banner
-                emergency_placeholder.markdown(
-                    render_emergency_status_card(notifier.emergency_email_dispatched),
-                    unsafe_allow_html=True
-                )
-                
-                # Delay loop to match ~30 FPS
-                time.sleep(0.033)
-                
-        except Exception as e:
-            logger.error(f"Dashboard monitoring loop error: {e}")
-            st.error(f"Monitoring loop interrupted: {e}")
-        finally:
-            cam_mgr.stop()
-            notifier.close()
+                        mc1, mc2, mc3 = st.columns(3)
+                        with mc1:
+                            st.markdown(render_styled_card("Risk Score", f"{score} / 6", "Maximum: 6"), unsafe_allow_html=True)
+                        with mc2:
+                            prob_pct = f"{fatigue_prob * 100:.0f}%"
+                            theme = "red" if fatigue_prob > 0.5 else "green"
+                            st.markdown(render_styled_card("Fatigue Forecast", prob_pct, f"ML Status: {pred_label}", theme), unsafe_allow_html=True)
+                        with mc3:
+                            st.markdown(render_styled_card("Session Timer", duration_str, "Active Monitoring"), unsafe_allow_html=True)
+                            
+                    # E. Emergency Email Status Banner
+                    emergency_placeholder.markdown(
+                        render_emergency_status_card(notifier.emergency_email_dispatched),
+                        unsafe_allow_html=True
+                    )
+                    
+                    # Pause before next UI redraw
+                    time.sleep(0.3)
+                    st.rerun()
+                    
+            except Exception as e:
+                logger.error(f"Dashboard WebRTC UI refresh loop error: {e}")
+                st.error(f"UI update thread interrupted: {e}")
+            finally:
+                notifier.close()
+        else:
+            video_placeholder.info("📺 Camera stream is offline. Please click 'Start' in the WebRTC stream controller below to begin active monitoring.")
             
     # --- OFFLINE / SUMMARY VIEW DISPLAY ---
     else:

@@ -642,12 +642,13 @@ def run_dashboard():
                     logger.error(f"Dashboard WebRTC UI refresh loop error: {e}")
                     st.error(f"UI update thread interrupted: {e}")
                 finally:
-                    notifier.close()
-                    st.session_state.audio_state = "safe"
-                    st.session_state.last_warning_trigger = 0.0
-                    st.session_state.last_speech_trigger = 0.0
-                    st.session_state.last_speech_text = ""
-                    audio_placeholder.empty()
+                    if not st.session_state.active_session or not ctx.state.playing:
+                        notifier.close()
+                        st.session_state.audio_state = "safe"
+                        st.session_state.last_warning_trigger = 0.0
+                        st.session_state.last_speech_trigger = 0.0
+                        st.session_state.last_speech_text = ""
+                        audio_placeholder.empty()
             else:
                 video_placeholder.info("📺 Camera stream is offline. Please click 'Start' in the WebRTC stream controller below to begin active monitoring.")
         
@@ -853,16 +854,27 @@ def run_dashboard():
             except Exception as e:
                 logger.error(f"Dashboard local camera UI loop error: {e}")
                 st.error(f"Local camera streaming interrupted: {e}")
-            finally:
                 if "cam_mgr" in st.session_state and st.session_state.cam_mgr is not None:
-                    st.session_state.cam_mgr.stop()
+                    try:
+                        st.session_state.cam_mgr.stop()
+                    except Exception:
+                        pass
                     st.session_state.cam_mgr = None
                 notifier.close()
-                st.session_state.audio_state = "safe"
-                st.session_state.last_warning_trigger = 0.0
-                st.session_state.last_speech_trigger = 0.0
-                st.session_state.last_speech_text = ""
-                audio_placeholder.empty()
+            finally:
+                if not st.session_state.active_session:
+                    if "cam_mgr" in st.session_state and st.session_state.cam_mgr is not None:
+                        try:
+                            st.session_state.cam_mgr.stop()
+                        except Exception:
+                            pass
+                        st.session_state.cam_mgr = None
+                    notifier.close()
+                    st.session_state.audio_state = "safe"
+                    st.session_state.last_warning_trigger = 0.0
+                    st.session_state.last_speech_trigger = 0.0
+                    st.session_state.last_speech_text = ""
+                    audio_placeholder.empty()
             
     # --- OFFLINE / SUMMARY VIEW DISPLAY ---
     else:

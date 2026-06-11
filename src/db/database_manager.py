@@ -52,7 +52,7 @@ class DatabaseManager:
                 user_id INTEGER NOT NULL,
                 ear_threshold REAL DEFAULT 0.22,
                 mar_threshold REAL DEFAULT 0.50,
-                gaze_threshold REAL DEFAULT 15.0,
+                gaze_threshold REAL DEFAULT 25.0,
                 eye_closure_duration_sec REAL DEFAULT 2.0,
                 yawn_duration_sec REAL DEFAULT 3.0,
                 alert_volume REAL DEFAULT 0.8,
@@ -141,7 +141,7 @@ class DatabaseManager:
                             user_id, ear_threshold, mar_threshold, gaze_threshold,
                             eye_closure_duration_sec, yawn_duration_sec, alert_volume,
                             tts_enabled, alarm_sound_path
-                        ) VALUES (?, 0.22, 0.50, 15.0, 2.0, 3.0, 0.8, 1, ?);
+                        ) VALUES (?, 0.22, 0.50, 25.0, 2.0, 3.0, 0.8, 1, ?);
                         """,
                         (user_id, str(config.sound_critical_alarm))
                     )

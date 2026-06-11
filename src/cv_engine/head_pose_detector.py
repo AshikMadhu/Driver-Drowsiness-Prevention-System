@@ -11,6 +11,9 @@ class HeadPoseDetector:
         # State tracking for duration timers
         self.yaw_distracted_start_time = None
         self.head_down_start_time = None
+        from collections import deque
+        self.pitch_history = deque(maxlen=5)
+        self.yaw_history = deque(maxlen=5)
         
         # Define standard 3D coordinates for the 6 key facial landmarks (in millimeters)
         # 1. Nose Tip (index 0) -> Origin (0, 0, 0)
@@ -144,11 +147,18 @@ class HeadPoseDetector:
                 
             p2 = (p2_x, p2_y)
             
+            # Smooth pitch and yaw using rolling averages
+            self.pitch_history.append(pitch)
+            self.yaw_history.append(yaw)
+            
+            smoothed_pitch = sum(self.pitch_history) / len(self.pitch_history)
+            smoothed_yaw = sum(self.yaw_history) / len(self.yaw_history)
+            
             # Check deviation (distraction)
-            # If absolute pitch or absolute yaw exceeds threshold, driver is looking away
-            is_yaw_distracted = abs(yaw) > self.deviation_threshold
-            is_head_down = pitch < -12.0 # Head dropped down (standard threshold)
-            is_distracted = is_yaw_distracted or abs(pitch) > self.deviation_threshold
+            # Use smoothed yaw for distraction checks
+            is_yaw_distracted = abs(smoothed_yaw) > self.deviation_threshold
+            is_head_down = smoothed_pitch < -12.0 # Head dropped down (standard threshold)
+            is_distracted = is_yaw_distracted or abs(smoothed_pitch) > self.deviation_threshold
             
             import time
             # State-based yaw distraction timer
@@ -170,8 +180,8 @@ class HeadPoseDetector:
                 head_down_duration = 0.0
                               
             return {
-                "pitch": pitch,
-                "yaw": yaw,
+                "pitch": smoothed_pitch,
+                "yaw": smoothed_yaw,
                 "roll": roll,
                 "nose_tip_center": p1,
                 "nose_projected_tip": p2,
@@ -190,6 +200,8 @@ class HeadPoseDetector:
         """
         result = self.estimate_pose(head_pose_points, img_width, img_height)
         if result is None:
+            self.pitch_history.clear()
+            self.yaw_history.clear()
             return {
                 "pitch": 0.0,
                 "yaw": 0.0,

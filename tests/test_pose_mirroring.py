@@ -59,10 +59,14 @@ class TestPoseMirroring(unittest.TestCase):
     def test_non_mirrored_symmetry(self):
         """Verifies that non-mirrored inputs produce correct symmetric yaw values."""
         # 1. Look right (negative yaw in standard rotation)
+        self.detector.pitch_history.clear()
+        self.detector.yaw_history.clear()
         pts_right = self.project_model_points(yaw_deg=-20.0)
         res_right = self.detector.process(pts_right, 640, 480)
         
         # 2. Look left (positive yaw in standard rotation)
+        self.detector.pitch_history.clear()
+        self.detector.yaw_history.clear()
         pts_left = self.project_model_points(yaw_deg=20.0)
         res_left = self.detector.process(pts_left, 640, 480)
         
@@ -78,10 +82,14 @@ class TestPoseMirroring(unittest.TestCase):
     def test_mirrored_self_healing(self):
         """Verifies that mirrored inputs are detected and corrected, yielding correct yaw and pitch."""
         # 1. Look right in real life -> mirrored left in image
+        self.detector.pitch_history.clear()
+        self.detector.yaw_history.clear()
         pts_right_mir = self.project_model_points(yaw_deg=-20.0, mirrored=True)
         res_right_mir = self.detector.process(pts_right_mir, 640, 480)
         
         # 2. Look left in real life -> mirrored right in image
+        self.detector.pitch_history.clear()
+        self.detector.yaw_history.clear()
         pts_left_mir = self.project_model_points(yaw_deg=20.0, mirrored=True)
         res_left_mir = self.detector.process(pts_left_mir, 640, 480)
         

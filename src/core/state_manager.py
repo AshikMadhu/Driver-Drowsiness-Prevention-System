@@ -53,7 +53,7 @@ class StateManager:
                             user_id, ear_threshold, mar_threshold, gaze_threshold,
                             eye_closure_duration_sec, yawn_duration_sec, alert_volume,
                             tts_enabled, alarm_sound_path
-                        ) VALUES (?, 0.22, 0.50, 15.0, 2.0, 3.0, 0.8, 1, 'data/audio/critical_alarm.wav');
+                        ) VALUES (?, 0.22, 0.50, 25.0, 2.0, 3.0, 0.8, 1, 'data/audio/critical_alarm.wav');
                         """,
                         (self.current_user_id,)
                     )

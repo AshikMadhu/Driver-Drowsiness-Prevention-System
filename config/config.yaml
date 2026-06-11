@@ -23,7 +23,7 @@ algorithms:
   # Eye, Mouth, and Gaze mathematical thresholds
   ear_threshold: 0.22             # Eye Aspect Ratio threshold (below = closed)
   mar_threshold: 0.50             # Mouth Aspect Ratio threshold (above = yawning)
-  gaze_threshold: 15.0            # Off-road deviation angle threshold (degrees)
+  gaze_threshold: 25.0            # Off-road deviation angle threshold (degrees)
   
   # Timing thresholds (duration in seconds)
   eye_closure_warn_time: 1.2

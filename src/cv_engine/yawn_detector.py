@@ -10,6 +10,8 @@ class YawnDetector:
         self.mar_threshold = mar_threshold
         self.yawn_start_time = None
         self.is_currently_yawning = False
+        from collections import deque
+        self.mar_history = deque(maxlen=5)
 
     def _euclidean_distance(self, pt1: Tuple[int, int], pt2: Tuple[int, int]) -> float:
         """Helper to calculate Euclidean distance between two 2D coordinates."""
@@ -53,7 +55,14 @@ class YawnDetector:
         """
         mar = self.calculate_mar(mouth_points) if mouth_points else 0.0
         
-        is_yawning = mar > self.mar_threshold
+        if mar > 0.0:
+            self.mar_history.append(mar)
+        else:
+            self.mar_history.clear()
+            
+        smoothed_mar = sum(self.mar_history) / len(self.mar_history) if self.mar_history else mar
+        
+        is_yawning = smoothed_mar > self.mar_threshold
         yawn_duration = 0.0
         
         if is_yawning:
@@ -66,7 +75,7 @@ class YawnDetector:
             self.is_currently_yawning = False
             
         return {
-            "mar": mar,
+            "mar": smoothed_mar,  # Return smoothed MAR
             "is_yawning": is_yawning,
             "yawn_duration": yawn_duration
         }

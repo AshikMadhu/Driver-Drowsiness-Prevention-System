@@ -11,6 +11,8 @@ class EyeDetector:
         self.ear_threshold = ear_threshold
         self.closed_start_time = None
         self.is_currently_closed = False
+        from collections import deque
+        self.ear_history = deque(maxlen=5)
 
     def _euclidean_distance(self, pt1: Tuple[int, int], pt2: Tuple[int, int]) -> float:
         """Helper to calculate Euclidean distance between two 2D coordinates."""
@@ -64,7 +66,14 @@ class EyeDetector:
         else:
             avg_ear = 0.0
             
-        is_closed = avg_ear < self.ear_threshold and avg_ear > 0.0
+        if avg_ear > 0.0:
+            self.ear_history.append(avg_ear)
+        else:
+            self.ear_history.clear()
+            
+        smoothed_ear = sum(self.ear_history) / len(self.ear_history) if self.ear_history else avg_ear
+        
+        is_closed = smoothed_ear < self.ear_threshold and smoothed_ear > 0.0
         closure_duration = 0.0
         
         if is_closed:
@@ -79,7 +88,7 @@ class EyeDetector:
         return {
             "left_ear": ear_left,
             "right_ear": ear_right,
-            "avg_ear": avg_ear,
+            "avg_ear": smoothed_ear,  # Return smoothed EAR to state manager and logs
             "is_closed": is_closed,
             "closure_duration": closure_duration
         }

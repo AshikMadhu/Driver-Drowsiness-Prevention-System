@@ -78,7 +78,7 @@ class RiskEngine:
             indicators["head_drop"] = True
 
         # 4. Horizontal gaze distraction check
-        if yaw_distraction_duration >= 20.0:
+        if yaw_distraction_duration >= 25.0:
             score += 4 # Triggers Danger/Critical continuous alarm
             indicators["distraction"] = True
         elif yaw_distraction_duration >= 3.0:

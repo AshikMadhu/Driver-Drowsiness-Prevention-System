@@ -1,15 +1,4 @@
----
-title: Intelligent Driver Drowsiness Prevention System
-emoji: 🛡️
-colorFrom: blue
-colorTo: red
-sdk: streamlit
-sdk_version: 1.30.0
-python_version: 3.11
-app_file: main.py
-pinned: false
-license: mit
----
+
 
 # 🛡️ AI-Powered Intelligent Driver Safety & Drowsiness Prevention System
 

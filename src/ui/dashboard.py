@@ -636,7 +636,6 @@ def run_dashboard():
                         )
                         
                         time.sleep(0.3)
-                        st.rerun()
                         
                 except Exception as e:
                     logger.error(f"Dashboard WebRTC UI refresh loop error: {e}")
@@ -849,7 +848,6 @@ def run_dashboard():
                     )
                     
                     time.sleep(0.033)
-                    st.rerun()
                     
             except Exception as e:
                 logger.error(f"Dashboard local camera UI loop error: {e}")

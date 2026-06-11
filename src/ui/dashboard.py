@@ -528,7 +528,7 @@ def run_dashboard():
                             score = ctx.video_processor.last_score
                             risk_level = ctx.video_processor.last_level
                         
-                        am = ctx.video_processor.notifier.audio_manager
+                        am = ctx.video_processor.notifier.audio
                         vm = ctx.video_processor.notifier.voice
                         
                         trigger_warning = False
@@ -741,9 +741,9 @@ def run_dashboard():
                     st.session_state.ear_history.append(avg_ear)
                     st.session_state.mar_history.append(mar)
                     
-                    video_placeholder.image(frame, channels="BGR", use_container_width=True)
+                    video_placeholder.image(frame, channels="BGR", width="stretch")
                     
-                    am = notifier.audio_manager
+                    am = notifier.audio
                     vm = notifier.voice
                     
                     trigger_warning = False

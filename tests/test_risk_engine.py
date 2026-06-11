@@ -66,12 +66,12 @@ def run_integration_test():
         (2.0, 0.0, 0.0, 0.0, 2, "Warning"),
         # (5) Eyes Closed Alarm (closure_duration = 3.5) -> score 4 (Danger)
         (3.5, 0.0, 0.0, 0.0, 4, "Danger"),
-        # (6) Head Drop Alarm (head_down_duration = 2.5) -> score 4 (Danger)
-        (0.0, 0.0, 2.5, 0.0, 4, "Danger"),
+        # (6) Head Drop Alarm (head_down_duration = 3.5) -> score 4 (Danger)
+        (0.0, 0.0, 3.5, 0.0, 4, "Danger"),
         # (7) Horizontal Gaze Distraction Alarm (yaw_distraction_duration = 36.0) -> score 4 (Danger)
         (0.0, 0.0, 0.0, 36.0, 4, "Danger"),
         # (8) Critical state (Closed + Yawn + Head Drop + Distracted) -> 4 + 4 + 4 + 4 = 16 (Critical)
-        (3.5, 3.5, 2.5, 36.0, 16, "Critical")
+        (3.5, 3.5, 3.5, 36.0, 16, "Critical")
     ]
     
     for idx, (closure_dur, yawn_dur, head_down_dur, yaw_distract_dur, expected_raw, _) in enumerate(simulations, 1):
@@ -88,7 +88,7 @@ def run_integration_test():
             risk_res, 
             ear=0.15 if (closure_dur >= 1.5) else 0.28, 
             mar=0.65 if (yawn_dur > 0.0) else 0.12, 
-            pitch=-15.0 if (head_down_dur >= 2.0) else 0.0, 
+            pitch=-15.0 if (head_down_dur >= 3.0) else 0.0, 
             yaw=20.0 if (yaw_distract_dur >= 3.0) else 0.0, 
             roll=0.0
         )

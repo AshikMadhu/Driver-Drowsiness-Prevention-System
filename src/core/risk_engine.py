@@ -61,17 +61,20 @@ class RiskEngine:
             score += 2 # Triggers Warning chime + voice reminder
             indicators["eye_closure"] = True
 
-        # 2. Yawning check
+        # 2. Yawning check (duration-based to ignore talking)
         if yawn_duration >= 3.0:
             score += 4 # Triggers Danger/Critical continuous alarm
             indicators["yawn"] = True
-        elif yawn_duration > 0.0:
-            score += self.YAWN_WEIGHT
+        elif yawn_duration >= 1.5:
+            score += 1 # Soft warning (ignored if talking, which has shorter duration)
             indicators["yawn"] = True
 
         # 3. Head Drop check
-        if head_down_duration >= 2.0:
+        if head_down_duration >= 3.0:
             score += 4 # Triggers Danger/Critical continuous alarm
+            indicators["head_drop"] = True
+        elif head_down_duration >= 1.5:
+            score += 2 # Triggers Warning chime + voice reminder
             indicators["head_drop"] = True
 
         # 4. Horizontal gaze distraction check

@@ -132,32 +132,19 @@ class NotificationService:
                 self.voice.speak(phrase)
                 self.last_voice_alert_time = now
 
-        # --- LEVEL 3: Danger Alert Level ---
-        elif risk_level == "Danger":
-            self.current_level = self.LEVEL_3_CONT_ALARM
-            self.critical_start_time = None
-            
-            # Play continuous loud alarm buzzer
-            self.audio.play_critical_alarm()
-            
-            # Continuous voice alert throttling
-            if now - self.last_voice_alert_time > 4.0: # Shorter cooldown for danger
-                self.voice.speak("Danger. Drowsiness detected. Wake up immediately.")
-                self.last_voice_alert_time = now
-
-        # --- LEVEL 4: Critical Escalation Level ---
-        elif risk_level == "Critical":
+        # --- LEVEL 3 & 4: Danger / Critical Alarm & Escalation Level ---
+        elif risk_level in ["Danger", "Critical"]:
             self.current_level = self.LEVEL_3_CONT_ALARM # Starts at continuous loop
             self.audio.play_critical_alarm()
             
-            # Track persistent critical time
+            # Track persistent critical/danger time
             if self.critical_start_time is None:
                 self.critical_start_time = now
-                logger.info("NotificationService: Driver entered Critical risk state. Starting escalation timer...")
+                logger.info(f"NotificationService: Driver entered {risk_level} risk state. Starting escalation timer...")
             
             critical_elapsed = now - self.critical_start_time
             
-            # Escalate to Level 4 (Emergency Alert) if critical for > 4.0 seconds
+            # Escalate to Level 4 (Emergency Alert) if in Danger/Critical for > 4.0 seconds
             if critical_elapsed > 4.0:
                 self.current_level = self.LEVEL_4_EMERGENCY
                 
@@ -168,176 +155,195 @@ class NotificationService:
                 
                 # Send emergency email (Only once per event sequence)
                 if not self.emergency_email_dispatched:
-                    logger.warn("NotificationService: Critical threshold exceeded! Dispatching Level 4 Emergency Email.")
+                    logger.warn(f"NotificationService: Persistent hazard threshold exceeded ({critical_elapsed:.1f}s)! Dispatching Level 4 Emergency Email.")
                     frame_copy = frame.copy() if frame is not None else None
                     self._send_level4_emergency_email_async(driver_name, ear, mar, pitch, yaw, frame_copy, session_id, critical_elapsed)
                     self.emergency_email_dispatched = True
+            else:
+                # Play continuous alarm warning
+                if now - self.last_voice_alert_time > 4.0: # Shorter cooldown for danger
+                    self.voice.speak("Danger. Drowsiness detected. Wake up immediately.")
+                    self.last_voice_alert_time = now
 
         return self.current_level
 
     def _send_third_alarm_email_async(self, driver_name: str, ear: float, mar: float, pitch: float, yaw: float, frame_copy, session_id: Optional[int]):
         """Queries database stats, captures a screenshot, and sends details of the 3rd repeat alarm in a background thread."""
         import threading
+        import traceback
         
         def worker():
-            alert_count = 0
-            drowsiness_warn_count = 0
-            drowsiness_alarm_count = 0
-            yawn_count = 0
-            head_drop_count = 0
-            distraction_count = 0
-            
-            if session_id is not None and self.db_mgr is not None:
-                try:
-                    with self.db_mgr.connection() as conn:
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type != 'NORMAL';", (session_id,))
-                        alert_count = cursor.fetchone()[0]
+            try:
+                alert_count = 0
+                drowsiness_warn_count = 0
+                drowsiness_alarm_count = 0
+                yawn_count = 0
+                head_drop_count = 0
+                distraction_count = 0
+                
+                if session_id is not None and self.db_mgr is not None:
+                    try:
+                        with self.db_mgr.connection() as conn:
+                            cursor = conn.cursor()
+                            cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type != 'NORMAL';", (session_id,))
+                            alert_count = cursor.fetchone()[0]
+                            
+                            cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DROWSINESS_WARN';", (session_id,))
+                            drowsiness_warn_count = cursor.fetchone()[0]
+                            
+                            cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DROWSINESS_ALARM';", (session_id,))
+                            drowsiness_alarm_count = cursor.fetchone()[0]
+                            
+                            cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'YAWN';", (session_id,))
+                            yawn_count = cursor.fetchone()[0]
+                            
+                            cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DISTRACTION' AND head_pitch < -12.0;", (session_id,))
+                            head_drop_count = cursor.fetchone()[0]
+                            
+                            cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DISTRACTION' AND head_pitch >= -12.0;", (session_id,))
+                            distraction_count = cursor.fetchone()[0]
+                    except Exception as db_err:
+                        logger.error(f"NotificationService: Error querying 3rd alarm stats: {db_err}")
+                        logger.error(traceback.format_exc())
                         
-                        cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DROWSINESS_WARN';", (session_id,))
-                        drowsiness_warn_count = cursor.fetchone()[0]
+                screenshot_path = None
+                if frame_copy is not None and session_id is not None and self.evidence is not None:
+                    try:
+                        screenshot_path = self.evidence.capture_evidence(
+                            frame=frame_copy,
+                            session_id=session_id,
+                            event_type="3RD_EYE_CLOSED_ALARM",
+                            ear_value=ear,
+                            mar_value=mar,
+                            risk_level="Critical",
+                            force=True
+                        )
+                    except Exception as sc_err:
+                        logger.error(f"NotificationService: Error capturing 3rd alarm screenshot: {sc_err}")
+                        logger.error(traceback.format_exc())
                         
-                        cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DROWSINESS_ALARM';", (session_id,))
-                        drowsiness_alarm_count = cursor.fetchone()[0]
-                        
-                        cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'YAWN';", (session_id,))
-                        yawn_count = cursor.fetchone()[0]
-                        
-                        cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DISTRACTION' AND head_pitch < -12.0;", (session_id,))
-                        head_drop_count = cursor.fetchone()[0]
-                        
-                        cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DISTRACTION' AND head_pitch >= -12.0;", (session_id,))
-                        distraction_count = cursor.fetchone()[0]
-                except Exception as db_err:
-                    logger.error(f"NotificationService: Error querying 3rd alarm stats: {db_err}")
-                    
-            screenshot_path = None
-            if frame_copy is not None and session_id is not None and self.evidence is not None:
-                try:
-                    screenshot_path = self.evidence.capture_evidence(
-                        frame=frame_copy,
-                        session_id=session_id,
-                        event_type="3RD_EYE_CLOSED_ALARM",
-                        ear_value=ear,
-                        mar_value=mar,
-                        risk_level="Critical",
-                        force=True
-                    )
-                except Exception as sc_err:
-                    logger.error(f"NotificationService: Error capturing 3rd alarm screenshot: {sc_err}")
-                    
-            details = f"""
-            DETAILED REPORT ON 3rd EYE CLOSURE ALARM EVENT:
-            - Current Session ID:      {session_id if session_id is not None else 'N/A'}
-            - Total Session Alerts:    {alert_count}
-            - Drowsiness Warnings:     {drowsiness_warn_count}
-            - Drowsiness Alarms:       {drowsiness_alarm_count} (Eye Closures)
-            - Yawning Event Count:     {yawn_count}
-            - Head Drop Event Count:   {head_drop_count}
-            - Gaze Distraction Count:  {distraction_count}
-            
-            CURRENT METRICS:
-            - EAR:                     {ear:.3f}
-            - MAR:                     {mar:.3f}
-            - Head Pitch:              {pitch:.2f} degrees
-            - Head Yaw:                {yaw:.2f} degrees
-            
-            Screenshot of safety violation is attached to this email.
-            """
-            
-            subject = f"🚨 3rd EYE CLOSURE ALARM: Driver Safety Alert - {driver_name}"
-            
-            self.email.send_emergency_alert(
-                driver_name=driver_name,
-                risk_level="Critical Emergency (3rd Repeat)",
-                details=details,
-                image_path=str(screenshot_path) if screenshot_path else None,
-                subject=subject,
-                receiver="ashiksjc2025@gmail.com"
-            )
-            
+                details = f"""
+                DETAILED REPORT ON 3rd EYE CLOSURE ALARM EVENT:
+                - Current Session ID:      {session_id if session_id is not None else 'N/A'}
+                - Total Session Alerts:    {alert_count}
+                - Drowsiness Warnings:     {drowsiness_warn_count}
+                - Drowsiness Alarms:       {drowsiness_alarm_count} (Eye Closures)
+                - Yawning Event Count:     {yawn_count}
+                - Head Drop Event Count:   {head_drop_count}
+                - Gaze Distraction Count:  {distraction_count}
+                
+                CURRENT METRICS:
+                - EAR:                     {ear:.3f}
+                - MAR:                     {mar:.3f}
+                - Head Pitch:              {pitch:.2f} degrees
+                - Head Yaw:                {yaw:.2f} degrees
+                
+                Screenshot of safety violation is attached to this email.
+                """
+                
+                subject = f"🚨 3rd EYE CLOSURE ALARM: Driver Safety Alert - {driver_name}"
+                
+                self.email.send_emergency_alert(
+                    driver_name=driver_name,
+                    risk_level="Critical Emergency (3rd Repeat)",
+                    details=details,
+                    image_path=str(screenshot_path) if screenshot_path else None,
+                    subject=subject,
+                    receiver=getattr(self.email, "receiver_email", "ashiksjc2025@gmail.com")
+                )
+            except Exception as e:
+                logger.error(f"NotificationService: ThirdAlarmEmailWorker thread crashed: {e}")
+                logger.error(traceback.format_exc())
+                
         t = threading.Thread(target=worker, name="ThirdAlarmEmailWorker", daemon=True)
         t.start()
 
     def _send_level4_emergency_email_async(self, driver_name: str, ear: float, mar: float, pitch: float, yaw: float, frame_copy, session_id: Optional[int], critical_elapsed: float):
         """Queries database stats, captures a screenshot, and sends details of the Level 4 Emergency Alert in a background thread."""
         import threading
+        import traceback
         
         def worker():
-            alert_count = 0
-            drowsiness_warn_count = 0
-            drowsiness_alarm_count = 0
-            yawn_count = 0
-            head_drop_count = 0
-            distraction_count = 0
-            
-            if session_id is not None and self.db_mgr is not None:
-                try:
-                    with self.db_mgr.connection() as conn:
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type != 'NORMAL';", (session_id,))
-                        alert_count = cursor.fetchone()[0]
+            try:
+                alert_count = 0
+                drowsiness_warn_count = 0
+                drowsiness_alarm_count = 0
+                yawn_count = 0
+                head_drop_count = 0
+                distraction_count = 0
+                
+                if session_id is not None and self.db_mgr is not None:
+                    try:
+                        with self.db_mgr.connection() as conn:
+                            cursor = conn.cursor()
+                            cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type != 'NORMAL';", (session_id,))
+                            alert_count = cursor.fetchone()[0]
+                            
+                            cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DROWSINESS_WARN';", (session_id,))
+                            drowsiness_warn_count = cursor.fetchone()[0]
+                            
+                            cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DROWSINESS_ALARM';", (session_id,))
+                            drowsiness_alarm_count = cursor.fetchone()[0]
+                            
+                            cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'YAWN';", (session_id,))
+                            yawn_count = cursor.fetchone()[0]
+                            
+                            cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DISTRACTION' AND head_pitch < -12.0;", (session_id,))
+                            head_drop_count = cursor.fetchone()[0]
+                            
+                            cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DISTRACTION' AND head_pitch >= -12.0;", (session_id,))
+                            distraction_count = cursor.fetchone()[0]
+                    except Exception as db_err:
+                        logger.error(f"NotificationService: Error querying emergency stats: {db_err}")
+                        logger.error(traceback.format_exc())
                         
-                        cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DROWSINESS_WARN';", (session_id,))
-                        drowsiness_warn_count = cursor.fetchone()[0]
+                screenshot_path = None
+                if frame_copy is not None and session_id is not None and self.evidence is not None:
+                    try:
+                        screenshot_path = self.evidence.capture_evidence(
+                            frame=frame_copy,
+                            session_id=session_id,
+                            event_type="EMERGENCY_ALARM",
+                            ear_value=ear,
+                            mar_value=mar,
+                            risk_level="Critical",
+                            force=True
+                        )
+                    except Exception as sc_err:
+                        logger.error(f"NotificationService: Error capturing emergency screenshot: {sc_err}")
+                        logger.error(traceback.format_exc())
                         
-                        cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DROWSINESS_ALARM';", (session_id,))
-                        drowsiness_alarm_count = cursor.fetchone()[0]
-                        
-                        cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'YAWN';", (session_id,))
-                        yawn_count = cursor.fetchone()[0]
-                        
-                        cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DISTRACTION' AND head_pitch < -12.0;", (session_id,))
-                        head_drop_count = cursor.fetchone()[0]
-                        
-                        cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DISTRACTION' AND head_pitch >= -12.0;", (session_id,))
-                        distraction_count = cursor.fetchone()[0]
-                except Exception as db_err:
-                    logger.error(f"NotificationService: Error querying emergency stats: {db_err}")
-                    
-            screenshot_path = None
-            if frame_copy is not None and session_id is not None and self.evidence is not None:
-                try:
-                    screenshot_path = self.evidence.capture_evidence(
-                        frame=frame_copy,
-                        session_id=session_id,
-                        event_type="EMERGENCY_ALARM",
-                        ear_value=ear,
-                        mar_value=mar,
-                        risk_level="Critical",
-                        force=True
-                    )
-                except Exception as sc_err:
-                    logger.error(f"NotificationService: Error capturing emergency screenshot: {sc_err}")
-                    
-            details = f"""
-            DETAILED REPORT ON EMERGENCY ALARM EVENT:
-            - Current Session ID:      {session_id if session_id is not None else 'N/A'}
-            - Total Session Alerts:    {alert_count}
-            - Drowsiness Warnings:     {drowsiness_warn_count}
-            - Drowsiness Alarms:       {drowsiness_alarm_count} (Eye Closures)
-            - Yawning Event Count:     {yawn_count}
-            - Head Drop Event Count:   {head_drop_count}
-            - Gaze Distraction Count:  {distraction_count}
-            
-            CURRENT METRICS:
-            - EAR Value:       {ear:.3f}
-            - MAR Value:       {mar:.3f}
-            - Head Pitch:      {pitch:.2f} degrees
-            - Head Yaw:        {yaw:.2f} degrees
-            - Critical Duration: {critical_elapsed:.1f} seconds
-            - Active Alarms:   Pygame buzzer + Text-to-speech sirens active
-            
-            Screenshot of safety violation is attached to this email.
-            """
-            
-            self.email.send_emergency_alert(
-                driver_name=driver_name,
-                risk_level="Critical Emergency",
-                details=details,
-                image_path=str(screenshot_path) if screenshot_path else None
-            )
-            
+                details = f"""
+                DETAILED REPORT ON EMERGENCY ALARM EVENT:
+                - Current Session ID:      {session_id if session_id is not None else 'N/A'}
+                - Total Session Alerts:    {alert_count}
+                - Drowsiness Warnings:     {drowsiness_warn_count}
+                - Drowsiness Alarms:       {drowsiness_alarm_count} (Eye Closures)
+                - Yawning Event Count:     {yawn_count}
+                - Head Drop Event Count:   {head_drop_count}
+                - Gaze Distraction Count:  {distraction_count}
+                
+                CURRENT METRICS:
+                - EAR Value:       {ear:.3f}
+                - MAR Value:       {mar:.3f}
+                - Head Pitch:      {pitch:.2f} degrees
+                - Head Yaw:        {yaw:.2f} degrees
+                - Critical Duration: {critical_elapsed:.1f} seconds
+                - Active Alarms:   Pygame buzzer + Text-to-speech sirens active
+                
+                Screenshot of safety violation is attached to this email.
+                """
+                
+                self.email.send_emergency_alert(
+                    driver_name=driver_name,
+                    risk_level="Critical Emergency",
+                    details=details,
+                    image_path=str(screenshot_path) if screenshot_path else None
+                )
+            except Exception as e:
+                logger.error(f"NotificationService: Level4EmergencyEmailWorker thread crashed: {e}")
+                logger.error(traceback.format_exc())
+                
         t = threading.Thread(target=worker, name="Level4EmergencyEmailWorker", daemon=True)
         t.start()
 

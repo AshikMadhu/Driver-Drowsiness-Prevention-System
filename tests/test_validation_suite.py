@@ -92,7 +92,7 @@ class MockDatabaseManager:
         def execute(self, *args, **kwargs):
             pass
         def fetchone(self):
-            return {"id": 1, "count": 0}
+            return (0,)
             
     def connection(self):
         return self.Connection()
@@ -466,6 +466,38 @@ def run_tests():
     test_results.append(("Test 9: Three eye closure alarms", t9_pass, f"Email sent successfully to {alerts_sent[0]['receiver'] if alerts_sent else 'None'}"))
 
     # -------------------------------------------------------------------------
+    # TEST 10: Persistent single hazard escalation (Level 4 Emergency Email)
+    # -------------------------------------------------------------------------
+    print("\n[*] Test 10: Persistent Single Hazard Scenario (Escalates to Level 4 Emergency Email after 4.0s of Danger)...")
+    eye_dec = EyeDetector(ear_threshold=eye_th)
+    yawn_dec = YawnDetector(mar_threshold=mar_th)
+    pose_dec = HeadPoseDetector(deviation_threshold=gaze_th)
+    risk_engine = RiskEngine(window_size=5, head_drop_threshold=-12.0, distraction_threshold=gaze_th)
+    
+    # Reset mock notifier
+    email_svc = MockEmailService()
+    notifier = NotificationService(audio_mgr, voice_alert, email_svc, MockDatabaseManager())
+    
+    # Eyes remain closed continuously for 7.0 seconds (210 frames at 30 FPS)
+    # This keeps score in Danger state (smoothed score = 4.0)
+    frames_danger = [{"ear": 0.10, "mar": 0.12}] * 210
+    
+    sim_res = run_simulation(eye_dec, yawn_dec, pose_dec, risk_engine, notifier, frames_danger)
+    
+    # Allow background thread triggers to process
+    time.sleep(0.5)
+    
+    # Verify that email alert was sent
+    alerts_sent = email_svc.alerts_sent
+    t10_pass = (notifier.current_level == NotificationService.LEVEL_4_EMERGENCY) and (len(alerts_sent) > 0)
+    print(f"  Final Alert Level:     {notifier.current_level} (Expected: {NotificationService.LEVEL_4_EMERGENCY})")
+    print(f"  Emergency Emails Sent:  {len(alerts_sent)} (Expected: >= 1)")
+    if alerts_sent:
+        print(f"  Subject:               {alerts_sent[0]['subject']}")
+    print(f"  Test 10 Result: {'[PASS]' if t10_pass else '[FAIL]'}")
+    test_results.append(("Test 10: Persistent single hazard escalation", t10_pass, f"Email sent successfully (Level 4 Emergency)"))
+
+    # -------------------------------------------------------------------------
     # PRINT SUMMARY AND EXPORT VALIDATION_TEST_RESULTS.md
     # -------------------------------------------------------------------------
     print("\n" + "=" * 60)
@@ -494,7 +526,7 @@ This document reports the execution results of the Driver Monitoring System (DMS
 ## 📝 Executive Summary
 
 * **Overall Status**: **{'🟢 PASSED' if all_pass else '🔴 FAILED'}**
-* **Total Scenarios Evaluated**: 9
+* **Total Scenarios Evaluated**: 10
 * **Total Scenarios Passed**: {sum([1 for _, r, _ in test_results if r])}
 * **Total Scenarios Failed**: {sum([1 for _, r, _ in test_results if not r])}
 
@@ -504,7 +536,7 @@ This document reports the execution results of the Driver Monitoring System (DMS
 
 | Test ID | Scenario Description | Expected Outcome / Constraint | Test Status | Validation Notes |
 | :--- | :--- | :--- | :---: | :--- |
-{validation_rows}
+| {validation_rows}
 
 ---
 
@@ -522,6 +554,8 @@ This document reports the execution results of the Driver Monitoring System (DMS
    * *Verified*: Rapid opening and closing of the mouth corresponding to talking or singing is ignored. A sustained high Mouth Aspect Ratio (MAR) for 4.0 seconds (exceeding the 3.0-second yawn duration threshold) successfully triggers a yawning alert.
 6. **Repeat Alert Emergency Escalation (Test 9)**:
    * *Verified*: On the **third** prolonged eye closure alarm, the system immediately escalates the severity, captures a screenshot, and sends an SMTP emergency alert to designated contacts.
+7. **Persistent Single Hazard Escalation (Test 10)**:
+   * *Verified*: If a single Danger state (e.g. eyes closed) persists continuously for more than 4.0 seconds, the system automatically escalates to Level 4 Emergency state and dispatches the emergency email.
 """
 
     # Save the report as an artifact

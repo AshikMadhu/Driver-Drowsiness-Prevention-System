@@ -78,6 +78,8 @@ class EmailService:
             logger.info("EmailService: Emergency email dispatch successful.")
         except Exception as e:
             logger.error(f"EmailService: Failed to dispatch emergency email: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
 
     def send_emergency_alert(self, driver_name: str, risk_level: str, details: str, image_path: str = None, subject: str = None, receiver: str = None):
         """

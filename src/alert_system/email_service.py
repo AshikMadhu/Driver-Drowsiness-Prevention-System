@@ -62,6 +62,7 @@ class EmailService:
                     with open(image_path, 'rb') as f:
                         img_data = f.read()
                     image_part = MIMEImage(img_data, name=os.path.basename(image_path))
+                    image_part.add_header('Content-Disposition', 'attachment', filename=os.path.basename(image_path))
                     msg.attach(image_part)
                     logger.info(f"EmailService: Attached screenshot to email: {image_path}")
                 except Exception as img_err:

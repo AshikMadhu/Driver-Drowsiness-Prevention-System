@@ -167,6 +167,37 @@ class NotificationService:
                     logger.warn("NotificationService: Critical threshold exceeded! Dispatching Level 4 Emergency Email.")
                     
                     screenshot_path = None
+                    alert_count = 0
+                    drowsiness_warn_count = 0
+                    drowsiness_alarm_count = 0
+                    yawn_count = 0
+                    head_drop_count = 0
+                    distraction_count = 0
+                    
+                    if session_id is not None and self.db_mgr is not None:
+                        try:
+                            with self.db_mgr.connection() as conn:
+                                cursor = conn.cursor()
+                                cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type != 'NORMAL';", (session_id,))
+                                alert_count = cursor.fetchone()[0]
+                                
+                                cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DROWSINESS_WARN';", (session_id,))
+                                drowsiness_warn_count = cursor.fetchone()[0]
+                                
+                                cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DROWSINESS_ALARM';", (session_id,))
+                                drowsiness_alarm_count = cursor.fetchone()[0]
+                                
+                                cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'YAWN';", (session_id,))
+                                yawn_count = cursor.fetchone()[0]
+                                
+                                cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DISTRACTION' AND head_pitch < -12.0;", (session_id,))
+                                head_drop_count = cursor.fetchone()[0]
+                                
+                                cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DISTRACTION' AND head_pitch >= -12.0;", (session_id,))
+                                distraction_count = cursor.fetchone()[0]
+                        except Exception as db_err:
+                            logger.error(f"NotificationService: Error querying emergency stats: {db_err}")
+                            
                     logger.info(f"NotificationService: Emergency email capture check: frame is not None: {frame is not None}, session_id: {session_id}, self.evidence is not None: {self.evidence is not None}")
                     if frame is not None and session_id is not None and self.evidence is not None:
                         try:
@@ -183,13 +214,24 @@ class NotificationService:
                             logger.error(f"NotificationService: Error capturing emergency screenshot: {sc_err}")
                             
                     details = f"""
-                    ALERT STATE TRIGGER METRICS:
+                    DETAILED REPORT ON EMERGENCY ALARM EVENT:
+                    - Current Session ID:      {session_id if session_id is not None else 'N/A'}
+                    - Total Session Alerts:    {alert_count}
+                    - Drowsiness Warnings:     {drowsiness_warn_count}
+                    - Drowsiness Alarms:       {drowsiness_alarm_count} (Eye Closures)
+                    - Yawning Event Count:     {yawn_count}
+                    - Head Drop Event Count:   {head_drop_count}
+                    - Gaze Distraction Count:  {distraction_count}
+                    
+                    CURRENT METRICS:
                     - EAR Value:       {ear:.3f}
                     - MAR Value:       {mar:.3f}
                     - Head Pitch:      {pitch:.2f} degrees
                     - Head Yaw:        {yaw:.2f} degrees
                     - Critical Duration: {critical_elapsed:.1f} seconds
                     - Active Alarms:   Pygame buzzer + Text-to-speech sirens active
+                    
+                    Screenshot of safety violation is attached to this email.
                     """
                     
                     self.email.send_emergency_alert(
@@ -205,8 +247,11 @@ class NotificationService:
     def _send_fourth_alarm_email(self, driver_name: str, ear: float, mar: float, pitch: float, yaw: float, frame, session_id: Optional[int]):
         """Queries database stats, captures a screenshot, and sends details of the 4th repeat alarm."""
         alert_count = 0
+        drowsiness_warn_count = 0
+        drowsiness_alarm_count = 0
         yawn_count = 0
         head_drop_count = 0
+        distraction_count = 0
         
         if session_id is not None and self.db_mgr is not None:
             try:
@@ -215,11 +260,20 @@ class NotificationService:
                     cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type != 'NORMAL';", (session_id,))
                     alert_count = cursor.fetchone()[0]
                     
+                    cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DROWSINESS_WARN';", (session_id,))
+                    drowsiness_warn_count = cursor.fetchone()[0]
+                    
+                    cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DROWSINESS_ALARM';", (session_id,))
+                    drowsiness_alarm_count = cursor.fetchone()[0]
+                    
                     cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'YAWN';", (session_id,))
                     yawn_count = cursor.fetchone()[0]
                     
                     cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DISTRACTION' AND head_pitch < -12.0;", (session_id,))
                     head_drop_count = cursor.fetchone()[0]
+                    
+                    cursor.execute("SELECT COUNT(*) FROM events WHERE session_id = ? AND event_type = 'DISTRACTION' AND head_pitch >= -12.0;", (session_id,))
+                    distraction_count = cursor.fetchone()[0]
             except Exception as db_err:
                 logger.error(f"NotificationService: Error querying 4th alarm stats: {db_err}")
                 
@@ -243,8 +297,11 @@ class NotificationService:
         DETAILED REPORT ON 4th EYE CLOSURE ALARM EVENT:
         - Current Session ID:      {session_id if session_id is not None else 'N/A'}
         - Total Session Alerts:    {alert_count}
+        - Drowsiness Warnings:     {drowsiness_warn_count}
+        - Drowsiness Alarms:       {drowsiness_alarm_count} (Eye Closures)
         - Yawning Event Count:     {yawn_count}
         - Head Drop Event Count:   {head_drop_count}
+        - Gaze Distraction Count:  {distraction_count}
         
         CURRENT METRICS:
         - EAR:                     {ear:.3f}

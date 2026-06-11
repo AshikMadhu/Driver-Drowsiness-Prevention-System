@@ -21,11 +21,11 @@ class HeadPoseDetector:
         # 6. Right Mouth Corner (index 5) -> (-150, -150, -125)
         self.model_points = np.array([
             (0.0, 0.0, 0.0),             # Nose tip
-            (0.0, -330.0, -65.0),        # Chin
-            (225.0, 170.0, -135.0),      # Left Eye Outer Corner
-            (-225.0, 170.0, -135.0),     # Right Eye Outer Corner
-            (150.0, -150.0, -125.0),     # Left Mouth Corner
-            (-150.0, -150.0, -125.0)     # Right Mouth Corner
+            (0.0, 330.0, -65.0),         # Chin
+            (225.0, -170.0, -135.0),     # Left Eye Outer Corner
+            (-225.0, -170.0, -135.0),    # Right Eye Outer Corner
+            (150.0, 150.0, -125.0),      # Left Mouth Corner
+            (-150.0, 150.0, -125.0)      # Right Mouth Corner
         ], dtype=np.float32)
 
     def estimate_pose(self, head_pose_points: List[Tuple[int, int]], img_width: int, img_height: int) -> Optional[Dict[str, Any]]:

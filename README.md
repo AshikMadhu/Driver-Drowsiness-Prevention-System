@@ -1,3 +1,15 @@
+---
+title: Intelligent Driver Drowsiness Prevention System
+emoji: 🛡️
+colorFrom: blue
+colorTo: red
+sdk: streamlit
+sdk_version: 1.30.0
+app_file: main.py
+pinned: false
+license: mit
+---
+
 # 🛡️ AI-Powered Intelligent Driver Safety & Drowsiness Prevention System
 
 > **An Edge-Ready, Multi-Stage Advanced Driver Assistance System (ADAS) leveraging real-time computer vision, temporal risk scoring, and ensemble machine learning predictions to prevent fatigue-related road accidents.**

@@ -162,10 +162,7 @@ def launch_gui():
     """Launches the Streamlit GUI dashboard."""
     log_info("Launching Streamlit GUI Dashboard...")
     try:
-        # Check if streamlit is command-line executable
-        subprocess.run(["streamlit", "run", "main.py"], check=True)
-    except FileNotFoundError:
-        # Fallback to python module execution
+        # Run streamlit as a module with the active interpreter to guarantee venv context
         subprocess.run([sys.executable, "-m", "streamlit", "run", "main.py"], check=True)
     except KeyboardInterrupt:
         log_info("Streamlit dashboard terminated by user.")

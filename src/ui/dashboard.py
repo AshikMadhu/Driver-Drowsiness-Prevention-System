@@ -7,9 +7,26 @@ from pathlib import Path
 from collections import deque
 from config import config
 import threading
-import av
 import base64
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration, VideoProcessorBase
+
+try:
+    import av
+    from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration, VideoProcessorBase
+    HAS_WEBRTC = True
+except Exception as e:
+    HAS_WEBRTC = False
+    # Mock av if not available, to prevent NameError on type annotations like av.VideoFrame
+    class MockAv:
+        class VideoFrame:
+            pass
+    av = MockAv
+    # Fallback/stub definitions to prevent NameErrors in dashboard execution
+    class VideoProcessorBase:
+        pass
+    webrtc_streamer = None
+    WebRtcMode = None
+    RTCConfiguration = None
+
 
 # Add root folder to python path to resolve imports
 import sys
@@ -344,20 +361,22 @@ def run_dashboard():
     st.sidebar.markdown("#### 📺 Camera Input Source")
     import os
     is_cloud = any(k in os.environ for k in ["SPACE_ID", "HUGGINGFACE_SPACES", "IS_CLOUD", "STREAMLIT_SHARING_MODE"])
-    if is_cloud:
-        camera_mode = st.sidebar.selectbox(
-            "Select Camera Source Mode",
-            ["Browser Webcam (WebRTC)"],
-            index=0,
-            help="Running in cloud environment. WebRTC browser webcam is required."
-        )
+    if not HAS_WEBRTC:
+        camera_options = ["Local USB Webcam (OpenCV)"]
+        camera_help = "Browser Webcam (WebRTC) is disabled locally because the system's security policy blocks compiled Rust DLLs in the 'cryptography' package."
+    elif is_cloud:
+        camera_options = ["Browser Webcam (WebRTC)"]
+        camera_help = "Running in cloud environment. WebRTC browser webcam is required."
     else:
-        camera_mode = st.sidebar.selectbox(
-            "Select Camera Source Mode",
-            ["Local USB Webcam (OpenCV)", "Browser Webcam (WebRTC)"],
-            index=0,
-            help="Select local capture for low-latency direct USB camera or WebRTC for browser streaming."
-        )
+        camera_options = ["Local USB Webcam (OpenCV)", "Browser Webcam (WebRTC)"]
+        camera_help = "Select local capture for low-latency direct USB camera or WebRTC for browser streaming."
+        
+    camera_mode = st.sidebar.selectbox(
+        "Select Camera Source Mode",
+        camera_options,
+        index=0,
+        help=camera_help
+    )
     
     st.sidebar.markdown("---")
     st.sidebar.markdown("#### Database Operations")
@@ -444,7 +463,7 @@ def run_dashboard():
                 "[👉 OPEN DIRECT APPLICATION LINK](https://xcoderfunny-driver-drowsiness-prevention.hf.space/)"
             )
             
-        if camera_mode == "Browser Webcam (WebRTC)":
+        if camera_mode == "Browser Webcam (WebRTC)" and HAS_WEBRTC:
             # RTC configuration supporting dynamic TURN server fallback for cloud containers
             turn_url = os.getenv("TURN_URL", "")
             turn_username = os.getenv("TURN_USERNAME", "")

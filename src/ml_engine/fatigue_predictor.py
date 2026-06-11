@@ -26,9 +26,8 @@ class FatiguePredictor:
     def load_models(self) -> bool:
         """Loads StandardScaler and model objects from disk."""
         if not (self.scaler_path.exists() and self.lr_path.exists() and self.rf_path.exists()):
-            logger.warning("FatiguePredictor: Model files do not exist. Please execute training first.")
-            self.models_loaded = False
-            return False
+            logger.warning("FatiguePredictor: Model files do not exist. Attempting auto-calibration...")
+            return self.auto_calibrate()
             
         try:
             with open(self.scaler_path, 'rb') as f:
@@ -42,7 +41,30 @@ class FatiguePredictor:
             logger.info("FatiguePredictor: Successfully loaded scaler and model weights (LR & RF).")
             return True
         except Exception as e:
-            logger.error(f"FatiguePredictor: Failed to load models: {e}")
+            logger.error(f"FatiguePredictor: Failed to load models: {e}. Attempting auto-calibration...")
+            return self.auto_calibrate()
+
+    def auto_calibrate(self) -> bool:
+        """Automatically runs the training pipeline to generate compatible model weights."""
+        try:
+            import importlib
+            # Dynamically import to avoid circular dependencies
+            train_module = importlib.import_module("train_model")
+            train_module.train_and_evaluate_fatigue_models(model_dir=self.model_dir)
+            
+            # Reload files
+            with open(self.scaler_path, 'rb') as f:
+                self.scaler = pickle.load(f)
+            with open(self.lr_path, 'rb') as f:
+                self.model_lr = pickle.load(f)
+            with open(self.rf_path, 'rb') as f:
+                self.model_rf = pickle.load(f)
+                
+            self.models_loaded = True
+            logger.info("FatiguePredictor: Auto-calibration completed successfully.")
+            return True
+        except Exception as ex:
+            logger.error(f"FatiguePredictor: Auto-calibration failed: {ex}")
             self.models_loaded = False
             return False
 

@@ -6,6 +6,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 from pathlib import Path
+from typing import Optional
 
 # Add root folder to python path to resolve imports
 BASE_DIR = Path(__file__).resolve().parent
@@ -63,7 +64,7 @@ def generate_synthetic_fatigue_dataset(num_samples: int = 1200) -> tuple:
     
     return X, y
 
-def train_and_evaluate_fatigue_models():
+def train_and_evaluate_fatigue_models(model_dir: Optional[Path] = None):
     print("=" * 60)
     print("      DRIVER FATIGUE PREDICTOR MODEL TRAINING PIPELINE    ")
     print("=" * 60)
@@ -126,11 +127,11 @@ def train_and_evaluate_fatigue_models():
             print("  Feature Importances:")
             for feat, imp in zip(feature_names, model.feature_importances_):
                 print(f"    * {feat}: {imp * 100:.2f}%")
-
+ 
     print("-" * 50 + "\n")
     
     # 6. Save Model weights
-    predictor = FatiguePredictor()
+    predictor = FatiguePredictor(model_dir=model_dir) if model_dir else FatiguePredictor()
     predictor.save_weights(scaler, model_lr, model_rf)
     
     print("=" * 60)

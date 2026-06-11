@@ -339,6 +339,26 @@ def run_dashboard():
     if not predictor.models_loaded:
         st.sidebar.caption("Run 'python train_model.py' to calibrate ML weights.")
     
+    # Camera configuration selectbox
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("#### 📺 Camera Input Source")
+    import os
+    is_cloud = any(k in os.environ for k in ["SPACE_ID", "HUGGINGFACE_SPACES", "IS_CLOUD", "STREAMLIT_SHARING_MODE"])
+    if is_cloud:
+        camera_mode = st.sidebar.selectbox(
+            "Select Camera Source Mode",
+            ["Browser Webcam (WebRTC)"],
+            index=0,
+            help="Running in cloud environment. WebRTC browser webcam is required."
+        )
+    else:
+        camera_mode = st.sidebar.selectbox(
+            "Select Camera Source Mode",
+            ["Local USB Webcam (OpenCV)", "Browser Webcam (WebRTC)"],
+            index=0,
+            help="Select local capture for low-latency direct USB camera or WebRTC for browser streaming."
+        )
+    
     st.sidebar.markdown("---")
     st.sidebar.markdown("#### Database Operations")
     if st.sidebar.button("🗑️ Clear Previous Data", use_container_width=True, disabled=st.session_state.get("active_session", False)):
@@ -384,6 +404,12 @@ def run_dashboard():
                 
     with col_stop:
         if st.button("⏹ Stop Monitor", use_container_width=True, disabled=not st.session_state.active_session):
+            if "cam_mgr" in st.session_state and st.session_state.cam_mgr is not None:
+                try:
+                    st.session_state.cam_mgr.stop()
+                except Exception as ex:
+                    logger.error(f"Error stopping local cam_mgr: {ex}")
+                st.session_state.cam_mgr = None
             state_mgr.end_session()
             st.session_state.active_session = False
             st.session_state.session_id = None
@@ -408,82 +434,298 @@ def run_dashboard():
         emergency_placeholder = st.empty()
         historical_placeholder = st.empty()
 
-    # --- RUN WEBCAM ACTIVE MONITORING VIA WEBRTC ---
+    # --- RUN WEBCAM ACTIVE MONITORING ---
     if st.session_state.active_session:
-        # RTC configuration supporting dynamic TURN server fallback for cloud containers
-        import os
-        turn_url = os.getenv("TURN_URL", "")
-        turn_username = os.getenv("TURN_USERNAME", "")
-        turn_password = os.getenv("TURN_PASSWORD", "")
-        
-        ice_servers = [
-            {"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302"]}
-        ]
-        
-        if turn_username and turn_password:
-            urls = []
-            if turn_url:
-                # Clean up host if user pasted raw hostname
-                clean_url = turn_url
-                if not clean_url.startswith("turn:") and not clean_url.startswith("turns:"):
-                    clean_url = f"turn:{clean_url}"
-                if ":" not in clean_url[6:]:
-                    clean_url = f"{clean_url}:443"
-                
-                urls.append(clean_url)
-                if "transport=tcp" not in clean_url:
-                    sep = "&" if "?" in clean_url else "?"
-                    urls.append(f"{clean_url}{sep}transport=tcp")
-                if clean_url.startswith("turn:") and "443" in clean_url:
-                    urls.append(clean_url.replace("turn:", "turns:"))
-            else:
-                # Default fallback list for Metered.ca standard configurations
-                urls.extend([
-                    "turn:global.metered.ca:80?transport=tcp",
-                    "turn:global.metered.ca:443?transport=tcp",
-                    "turns:global.metered.ca:443?transport=tcp",
-                    "turn:global.metered.ca:8678"
-                ])
-                
-            ice_servers.append({
-                "urls": urls,
-                "username": turn_username,
-                "credential": turn_password
-            })
-            
-        RTC_CONFIGURATION = RTCConfiguration({"iceServers": ice_servers})
-        
-        with col_left:
-            # We display the WebRTC streamer widget directly inside the left column
-            ctx = webrtc_streamer(
-                key="driver-safety-streamer",
-                mode=WebRtcMode.SENDRECV,
-                rtc_configuration=RTC_CONFIGURATION,
-                video_processor_factory=lambda: DriverSafetyVideoProcessor(
-                    sys_components, ear_threshold, mar_threshold, gaze_threshold
-                ),
-                media_stream_constraints={"video": True, "audio": False},
-                async_processing=True,
+        # Direct URL Redirect Guidance inside iframe containers
+        if camera_mode == "Browser Webcam (WebRTC)" and is_cloud:
+            st.warning(
+                "💡 **Webcam Sandbox Bypass**: WebRTC browser streaming cannot initialize inside cross-origin iframes. "
+                "If the camera feed hangs or times out, please open the direct URL:\n\n"
+                "[👉 OPEN DIRECT APPLICATION LINK](https://xcoderfunny-driver-drowsiness-prevention.hf.space/)"
             )
-        
-        if ctx.state.playing:
-            # Propagate session details to the background video processor thread
-            ctx.video_processor.session_id = st.session_state.session_id
-            ctx.video_processor.username = username
             
-            try:
-                # Non-blocking UI refresh loop that polls processor metrics and updates dashboard widgets
-                while ctx.state.playing and st.session_state.active_session:
-                    # Thread-safe read of calculated driver safety telemetry
-                    with ctx.video_processor.lock:
-                        ear = ctx.video_processor.last_ear
-                        mar = ctx.video_processor.last_mar
-                        score = ctx.video_processor.last_score
-                        risk_level = ctx.video_processor.last_level
+        if camera_mode == "Browser Webcam (WebRTC)":
+            # RTC configuration supporting dynamic TURN server fallback for cloud containers
+            turn_url = os.getenv("TURN_URL", "")
+            turn_username = os.getenv("TURN_USERNAME", "")
+            turn_password = os.getenv("TURN_PASSWORD", "")
+            
+            ice_servers = [
+                {"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302"]}
+            ]
+            
+            if turn_username and turn_password:
+                urls = []
+                if turn_url:
+                    clean_url = turn_url
+                    if not clean_url.startswith("turn:") and not clean_url.startswith("turns:"):
+                        clean_url = f"turn:{clean_url}"
+                    if ":" not in clean_url[6:]:
+                        clean_url = f"{clean_url}:443"
                     
-                    # Process audio alerts & speech synthesis in the browser via hidden iframe
-                    am = ctx.video_processor.notifier.audio_manager
-                    vm = ctx.video_processor.notifier.voice
+                    urls.append(clean_url)
+                    if "transport=tcp" not in clean_url:
+                        sep = "&" if "?" in clean_url else "?"
+                        urls.append(f"{clean_url}{sep}transport=tcp")
+                    if clean_url.startswith("turn:") and "443" in clean_url:
+                        urls.append(clean_url.replace("turn:", "turns:"))
+                else:
+                    urls.extend([
+                        "turn:global.metered.ca:80?transport=tcp",
+                        "turn:global.metered.ca:443?transport=tcp",
+                        "turns:global.metered.ca:443?transport=tcp",
+                        "turn:global.metered.ca:8678"
+                    ])
+                    
+                ice_servers.append({
+                    "urls": urls,
+                    "username": turn_username,
+                    "credential": turn_password
+                })
+                
+            RTC_CONFIGURATION = RTCConfiguration({"iceServers": ice_servers})
+            
+            with col_left:
+                ctx = webrtc_streamer(
+                    key="driver-safety-streamer",
+                    mode=WebRtcMode.SENDRECV,
+                    rtc_configuration=RTC_CONFIGURATION,
+                    video_processor_factory=lambda: DriverSafetyVideoProcessor(
+                        sys_components, ear_threshold, mar_threshold, gaze_threshold
+                    ),
+                    media_stream_constraints={"video": True, "audio": False},
+                    async_processing=True,
+                )
+            
+            if ctx.state.playing:
+                ctx.video_processor.session_id = st.session_state.session_id
+                ctx.video_processor.username = username
+                
+                try:
+                    while ctx.state.playing and st.session_state.active_session:
+                        with ctx.video_processor.lock:
+                            ear = ctx.video_processor.last_ear
+                            mar = ctx.video_processor.last_mar
+                            score = ctx.video_processor.last_score
+                            risk_level = ctx.video_processor.last_level
+                        
+                        am = ctx.video_processor.notifier.audio_manager
+                        vm = ctx.video_processor.notifier.voice
+                        
+                        trigger_warning = False
+                        if am.play_warning_requested:
+                            st.session_state.last_warning_trigger = time.time()
+                            am.play_warning_requested = False
+                            trigger_warning = True
+                            
+                        if am.play_critical_requested:
+                            active_audio = "critical"
+                        elif trigger_warning or (time.time() - st.session_state.get("last_warning_trigger", 0.0) < 1.5):
+                            active_audio = "warning"
+                        else:
+                            active_audio = "safe"
+                            
+                        trigger_speech = False
+                        speech_text = ""
+                        if vm.speech_requested:
+                            st.session_state.last_speech_trigger = time.time()
+                            st.session_state.last_speech_text = vm.speech_to_play
+                            vm.speech_requested = False
+                            trigger_speech = True
+                            speech_text = st.session_state.last_speech_text
+                            
+                        current_audio_state = st.session_state.get("audio_state", "safe")
+                        current_speech_trigger = st.session_state.get("speech_trigger", 0.0)
+                        
+                        new_audio_state = active_audio
+                        new_speech_trigger = st.session_state.last_speech_trigger if trigger_speech else current_speech_trigger
+                        
+                        if (new_audio_state != current_audio_state) or trigger_speech or trigger_warning:
+                            st.session_state.audio_state = new_audio_state
+                            st.session_state.speech_trigger = new_speech_trigger
+                            
+                            if new_audio_state == "safe" and not trigger_speech:
+                                audio_placeholder.empty()
+                            else:
+                                play_critical_js = "true" if new_audio_state == "critical" else "false"
+                                play_warning_js = "true" if (new_audio_state == "warning" and trigger_warning) else "false"
+                                speak_js = "true" if trigger_speech else "false"
+                                speech_escaped = speech_text.replace('"', '\\"') if speech_text else ""
+                                
+                                iframe_content = f"""
+                                <html>
+                                <head><title>Driver Safety Audio Context</title></head>
+                                <body>
+                                <script>
+                                    if ({play_critical_js}) {{
+                                        var audio = new Audio("data:audio/wav;base64,{critical_b64}");
+                                        audio.loop = true;
+                                        audio.play().catch(e => console.log("Critical alarm blocked:", e));
+                                    }}
+                                    if ({play_warning_js}) {{
+                                        var audio = new Audio("data:audio/wav;base64,{warning_b64}");
+                                        audio.play().catch(e => console.log("Warning chime blocked:", e));
+                                    }}
+                                    if ({speak_js}) {{
+                                        var msg = new SpeechSynthesisUtterance("{speech_escaped}");
+                                        msg.volume = {alert_volume};
+                                        msg.rate = {config.tts_rate} / 150.0;
+                                        window.speechSynthesis.speak(msg);
+                                    }}
+                                </script>
+                                </body>
+                                </html>
+                                """
+                                with audio_placeholder:
+                                    st.components.v1.html(iframe_content, height=0, width=0)
+    
+                        st.session_state.ear_history.append(ear)
+                        st.session_state.mar_history.append(mar)
+                        
+                        fig = create_realtime_metrics_plot(
+                            list(st.session_state.ear_history),
+                            list(st.session_state.mar_history),
+                            ear_threshold,
+                            mar_threshold
+                        )
+                        chart_placeholder.plotly_chart(fig, use_container_width=True, key=f"trend_chart_{time.time()}")
+                        
+                        session_time = time.time() - st.session_state.start_time
+                        mins, secs = divmod(int(session_time), 60)
+                        duration_str = f"{mins:02d}:{secs:02d}"
+                        
+                        pred_res = pred_service.evaluate_session_fatigue(st.session_state.session_id)
+                        fatigue_prob = pred_res["fatigue_probability"]
+                        pred_label = pred_res["prediction_label"]
+                        
+                        with cards_placeholder.container():
+                            st.markdown(render_risk_card(risk_level), unsafe_allow_html=True)
+                            
+                            mc1, mc2, mc3 = st.columns(3)
+                            with mc1:
+                                st.markdown(render_styled_card("Risk Score", f"{score} / 6", "Maximum: 6"), unsafe_allow_html=True)
+                            with mc2:
+                                prob_pct = f"{fatigue_prob * 100:.0f}%"
+                                theme = "red" if fatigue_prob > 0.5 else "green"
+                                st.markdown(render_styled_card("Fatigue Forecast", prob_pct, f"ML Status: {pred_label}", theme), unsafe_allow_html=True)
+                            with mc3:
+                                st.markdown(render_styled_card("Session Timer", duration_str, "Active Monitoring"), unsafe_allow_html=True)
+                                
+                        emergency_placeholder.markdown(
+                            render_emergency_status_card(notifier.emergency_email_dispatched),
+                            unsafe_allow_html=True
+                        )
+                        
+                        time.sleep(0.3)
+                        st.rerun()
+                        
+                except Exception as e:
+                    logger.error(f"Dashboard WebRTC UI refresh loop error: {e}")
+                    st.error(f"UI update thread interrupted: {e}")
+                finally:
+                    notifier.close()
+                    st.session_state.audio_state = "safe"
+                    st.session_state.last_warning_trigger = 0.0
+                    st.session_state.last_speech_trigger = 0.0
+                    st.session_state.last_speech_text = ""
+                    audio_placeholder.empty()
+            else:
+                video_placeholder.info("📺 Camera stream is offline. Please click 'Start' in the WebRTC stream controller below to begin active monitoring.")
+        
+        else:
+            # Local USB Webcam (OpenCV) Mode
+            try:
+                if "cam_mgr" not in st.session_state or st.session_state.cam_mgr is None:
+                    st.session_state.cam_mgr = CameraManager(
+                        source=config.camera_source,
+                        width=config.frame_width,
+                        height=config.frame_height
+                    )
+                    st.session_state.cam_mgr.start()
+                
+                cam_mgr = st.session_state.cam_mgr
+                
+                eye_dec = EyeDetector(ear_threshold=ear_threshold)
+                yawn_dec = YawnDetector(mar_threshold=mar_threshold)
+                pose_dec = HeadPoseDetector(deviation_threshold=gaze_threshold)
+                risk_engine = RiskEngine(
+                    window_size=10, 
+                    head_drop_threshold=-12.0, 
+                    distraction_threshold=gaze_threshold
+                )
+                
+                while st.session_state.active_session:
+                    ret, frame = cam_mgr.read()
+                    if not ret or frame is None:
+                        time.sleep(0.01)
+                        continue
+                        
+                    h, w, _ = frame.shape
+                    
+                    results = detector.process_frame(frame)
+                    
+                    risk_level = "Safe"
+                    raw_score = 0
+                    avg_ear = 0.28
+                    mar = 0.12
+                    pitch = 0.0
+                    yaw = 0.0
+                    roll = 0.0
+                    p1, p2 = None, None
+                    
+                    if results and results.multi_face_landmarks:
+                        face_landmarks = results.multi_face_landmarks[0]
+                        features = extractor.extract(face_landmarks, w, h)
+                        
+                        if features:
+                            eye_results = eye_dec.process(features["left_eye"], features["right_eye"])
+                            avg_ear = eye_results["avg_ear"]
+                            
+                            yawn_results = yawn_dec.process(features["mouth"])
+                            mar = yawn_results["mar"]
+                            
+                            pose_results = pose_dec.process(features["head_pose_points"], w, h)
+                            pitch = pose_results["pitch"]
+                            yaw = pose_results["yaw"]
+                            roll = pose_results["roll"]
+                            p1 = pose_results["nose_tip_center"]
+                            p2 = pose_results["nose_projected_tip"]
+                            
+                            risk_res = risk_engine.process(
+                                eye_results["closure_duration"], 
+                                yawn_results["yawn_duration"], 
+                                pose_results["head_down_duration"], 
+                                pose_results["yaw_distraction_duration"]
+                            )
+                            raw_score = risk_res["raw_score"]
+                            
+                            risk_level = state_mgr.update_risk_state(
+                                risk_res, avg_ear, mar, pitch, yaw, roll
+                            )
+                            
+                            notifier.process_risk_state(
+                                username, risk_level, risk_res["indicators"], 
+                                avg_ear, mar, pitch, yaw,
+                                frame=frame, session_id=st.session_state.session_id
+                            )
+                            
+                            draw_landmark_overlays(frame, face_landmarks)
+                            if p1 and p2:
+                                cv2.line(frame, p1, p2, (0, 255, 255), 2)
+                                cv2.circle(frame, p1, 3, (0, 0, 255), -1)
+                    else:
+                        notifier.process_risk_state(
+                            username, "Safe", {"eye_closure": False, "yawn": False, "distraction": False},
+                            0.28, 0.12, 0.0, 0.0
+                        )
+                    
+                    st.session_state.ear_history.append(avg_ear)
+                    st.session_state.mar_history.append(mar)
+                    
+                    video_placeholder.image(frame, channels="BGR", use_container_width=True)
+                    
+                    am = notifier.audio_manager
+                    vm = notifier.voice
                     
                     trigger_warning = False
                     if am.play_warning_requested:
@@ -530,7 +772,6 @@ def run_dashboard():
                             <head><title>Driver Safety Audio Context</title></head>
                             <body>
                             <script>
-                                // Audio Alerts
                                 if ({play_critical_js}) {{
                                     var audio = new Audio("data:audio/wav;base64,{critical_b64}");
                                     audio.loop = true;
@@ -540,7 +781,6 @@ def run_dashboard():
                                     var audio = new Audio("data:audio/wav;base64,{warning_b64}");
                                     audio.play().catch(e => console.log("Warning chime blocked:", e));
                                 }}
-                                // Speech Synthesis
                                 if ({speak_js}) {{
                                     var msg = new SpeechSynthesisUtterance("{speech_escaped}");
                                     msg.volume = {alert_volume};
@@ -553,12 +793,7 @@ def run_dashboard():
                             """
                             with audio_placeholder:
                                 st.components.v1.html(iframe_content, height=0, width=0)
-
-                    # Update deque history for Plotly visualizations
-                    st.session_state.ear_history.append(ear)
-                    st.session_state.mar_history.append(mar)
                     
-                    # A. Plotly Trend Chart Update
                     fig = create_realtime_metrics_plot(
                         list(st.session_state.ear_history),
                         list(st.session_state.mar_history),
@@ -567,23 +802,20 @@ def run_dashboard():
                     )
                     chart_placeholder.plotly_chart(fig, use_container_width=True, key=f"trend_chart_{time.time()}")
                     
-                    # B. Duration Timer Calculations
                     session_time = time.time() - st.session_state.start_time
                     mins, secs = divmod(int(session_time), 60)
                     duration_str = f"{mins:02d}:{secs:02d}"
                     
-                    # C. ML Fatigue Forecast Query
                     pred_res = pred_service.evaluate_session_fatigue(st.session_state.session_id)
                     fatigue_prob = pred_res["fatigue_probability"]
                     pred_label = pred_res["prediction_label"]
                     
-                    # D. Render Telemetry Cards
                     with cards_placeholder.container():
                         st.markdown(render_risk_card(risk_level), unsafe_allow_html=True)
                         
                         mc1, mc2, mc3 = st.columns(3)
                         with mc1:
-                            st.markdown(render_styled_card("Risk Score", f"{score} / 6", "Maximum: 6"), unsafe_allow_html=True)
+                            st.markdown(render_styled_card("Risk Score", f"{raw_score} / 6", "Maximum: 6"), unsafe_allow_html=True)
                         with mc2:
                             prob_pct = f"{fatigue_prob * 100:.0f}%"
                             theme = "red" if fatigue_prob > 0.5 else "green"
@@ -591,28 +823,27 @@ def run_dashboard():
                         with mc3:
                             st.markdown(render_styled_card("Session Timer", duration_str, "Active Monitoring"), unsafe_allow_html=True)
                             
-                    # E. Emergency Email Status Banner
                     emergency_placeholder.markdown(
                         render_emergency_status_card(notifier.emergency_email_dispatched),
                         unsafe_allow_html=True
                     )
                     
-                    # Pause before next UI redraw
-                    time.sleep(0.3)
+                    time.sleep(0.033)
                     st.rerun()
                     
             except Exception as e:
-                logger.error(f"Dashboard WebRTC UI refresh loop error: {e}")
-                st.error(f"UI update thread interrupted: {e}")
+                logger.error(f"Dashboard local camera UI loop error: {e}")
+                st.error(f"Local camera streaming interrupted: {e}")
             finally:
+                if "cam_mgr" in st.session_state and st.session_state.cam_mgr is not None:
+                    st.session_state.cam_mgr.stop()
+                    st.session_state.cam_mgr = None
                 notifier.close()
                 st.session_state.audio_state = "safe"
                 st.session_state.last_warning_trigger = 0.0
                 st.session_state.last_speech_trigger = 0.0
                 st.session_state.last_speech_text = ""
                 audio_placeholder.empty()
-        else:
-            video_placeholder.info("📺 Camera stream is offline. Please click 'Start' in the WebRTC stream controller below to begin active monitoring.")
             
     # --- OFFLINE / SUMMARY VIEW DISPLAY ---
     else:

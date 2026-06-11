@@ -12,8 +12,8 @@ Navigate to your Hugging Face Space page, go to **Settings** > **Variables and S
 | Secret Key | Description | Example Value |
 | :--- | :--- | :--- |
 | `SMTP_USERNAME` | The sender email address from which alert reports are dispatched. | `workzflow32@gmail.com` |
-| `SMTP_PASSWORD` | The email account's password (or 16-character Google App Password). | `akxlivvuwcdoqiza` |
-| `EMERGENCY_RECEIVER_EMAIL` | The destination emergency contact email address. | `ashiksjc2025@gmail.com` |
+| `SMTP_PASSWORD` | The email account's password (or 16-character Google App Password). | `hehehe` |
+| `EMERGENCY_RECEIVER_EMAIL` | The destination emergency contact email address. | `hehehe@gmail.com` |
 | `SMTP_SERVER` | SMTP host server address (defaults to `smtp.gmail.com` if omitted). | `smtp.gmail.com` |
 | `SMTP_PORT` | SMTP port (defaults to `587` if omitted). | `587` |
 

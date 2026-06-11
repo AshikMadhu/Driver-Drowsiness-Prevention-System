@@ -19,7 +19,7 @@ class YawnDetector:
         """
         Calculates Mouth Aspect Ratio (MAR) using inner lip landmarks.
         
-        Formula: MAR = (||p2 - p8|| + ||p3 - p7|| + ||p4 - p6||) / (2.0 * ||p1 - p5||)
+        Formula: MAR = (||p2 - p8|| + ||p3 - p7|| + ||p4 - p6||) / (3.0 * ||p1 - p5||)
         Indices map: p1=0, p2=1, p3=2, p4=3, p5=4, p6=5, p7=6, p8=7
         """
         if len(mouth_points) < 8:
@@ -38,7 +38,7 @@ class YawnDetector:
             if h < 1e-6:
                 return 0.0
                 
-            mar = (v1 + v2 + v3) / (2.0 * h)
+            mar = (v1 + v2 + v3) / (3.0 * h)
             return mar
         except Exception as e:
             logger.error(f"Error calculating MAR: {e}")

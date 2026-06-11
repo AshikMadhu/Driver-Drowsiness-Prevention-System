@@ -42,8 +42,8 @@ class RiskEngine:
             - Yawn: Alarm (+4) if yawned >= 3.0 seconds.
               Soft warning (+1) if yawned > 0.0 seconds.
             - Head Drop (down >= 2.0 seconds) = +4 (Alarm)
-            - Yaw Distraction (left/right >= 35.0 seconds) = +4 (Alarm)
-              No alarm for mirror check looking to side (< 35 seconds).
+            - Yaw Distraction (left/right >= 20.0 seconds) = +4 (Alarm)
+              No alarm for mirror check looking to side (< 20 seconds).
         """
         score = 0
         indicators = {
@@ -78,7 +78,7 @@ class RiskEngine:
             indicators["head_drop"] = True
 
         # 4. Horizontal gaze distraction check
-        if yaw_distraction_duration >= 35.0:
+        if yaw_distraction_duration >= 20.0:
             score += 4 # Triggers Danger/Critical continuous alarm
             indicators["distraction"] = True
         elif yaw_distraction_duration >= 3.0:

@@ -33,6 +33,7 @@ class NotificationService:
         # 4th eye closure alarm state tracking
         self.eye_closed_alarm_active = False
         self.eye_closed_alarm_count = 0
+        self.repeat_alarm_email_dispatched = False
         
         self.current_level = self.LEVEL_0_NONE
         
@@ -48,6 +49,7 @@ class NotificationService:
         """Resets the notification service state for a new session."""
         self.eye_closed_alarm_active = False
         self.eye_closed_alarm_count = 0
+        self.repeat_alarm_email_dispatched = False
         self.current_level = self.LEVEL_0_NONE
         self.critical_start_time = None
         self.emergency_email_dispatched = False
@@ -84,9 +86,10 @@ class NotificationService:
                 self.eye_closed_alarm_count += 1
                 logger.info(f"NotificationService: Eye closed alarm triggered ({self.eye_closed_alarm_count}/4).")
                 
-                if self.eye_closed_alarm_count == 4:
-                    logger.warn("NotificationService: Eye closed alarm triggered for the 4th time! Preparing 4th alarm email report...")
+                if self.eye_closed_alarm_count > 3 and not self.repeat_alarm_email_dispatched:
+                    logger.warn(f"NotificationService: Eye closed alarm triggered {self.eye_closed_alarm_count} times (> 3 times)! Preparing repeat alarm email report...")
                     self._send_fourth_alarm_email(driver_name, ear, mar, pitch, yaw, frame, session_id)
+                    self.repeat_alarm_email_dispatched = True
         else:
             self.eye_closed_alarm_active = False
         

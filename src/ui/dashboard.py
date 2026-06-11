@@ -341,7 +341,7 @@ def run_dashboard():
     
     st.sidebar.markdown("---")
     st.sidebar.markdown("#### Database Operations")
-    if st.sidebar.button("🗑️ Clear Previous Data", width="stretch", disabled=st.session_state.get("active_session", False)):
+    if st.sidebar.button("🗑️ Clear Previous Data", use_container_width=True, disabled=st.session_state.get("active_session", False)):
         if db.clear_database_data():
             st.sidebar.success("All previous session data cleared successfully.")
             if "active_sessions_records" in st.session_state:
@@ -371,7 +371,7 @@ def run_dashboard():
     # Session Buttons
     col_start, col_stop = st.sidebar.columns(2)
     with col_start:
-        if st.button("▶ Start Monitor", width="stretch", disabled=st.session_state.active_session):
+        if st.button("▶ Start Monitor", use_container_width=True, disabled=st.session_state.active_session):
             state_mgr.initialize_driver(username)
             session_id = state_mgr.start_session()
             if session_id:
@@ -383,7 +383,7 @@ def run_dashboard():
                 st.rerun()
                 
     with col_stop:
-        if st.button("⏹ Stop Monitor", width="stretch", disabled=not st.session_state.active_session):
+        if st.button("⏹ Stop Monitor", use_container_width=True, disabled=not st.session_state.active_session):
             state_mgr.end_session()
             st.session_state.active_session = False
             st.session_state.session_id = None
@@ -527,7 +527,7 @@ def run_dashboard():
                         ear_threshold,
                         mar_threshold
                     )
-                    chart_placeholder.plotly_chart(fig, width="stretch", key=f"trend_chart_{time.time()}")
+                    chart_placeholder.plotly_chart(fig, use_container_width=True, key=f"trend_chart_{time.time()}")
                     
                     # B. Duration Timer Calculations
                     session_time = time.time() - st.session_state.start_time
@@ -597,7 +597,7 @@ def run_dashboard():
                 
             if not df_sessions.empty:
                 st.session_state.active_sessions_records = df_sessions
-                historical_placeholder.dataframe(df_sessions, width="stretch", hide_index=True)
+                historical_placeholder.dataframe(df_sessions, use_container_width=True, hide_index=True)
                 
                 # Add historical summaries
                 total_sessions = len(df_sessions)

@@ -8,7 +8,8 @@ from collections import deque
 from config import config
 import threading
 import av
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
+import base64
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration, VideoProcessorBase
 
 # Add root folder to python path to resolve imports
 import sys
@@ -228,6 +229,20 @@ class DriverSafetyVideoProcessor(VideoProcessorBase):
             logger.error(f"Error in WebRTC video processing thread: {e}")
             return frame
 
+@st.cache_data
+def load_audio_base64(file_path: Path) -> str:
+    """Loads a WAV file and encodes it as base64 for browser playback."""
+    if not file_path.exists():
+        logger.warning(f"Audio file not found for base64 load: {file_path}")
+        return ""
+    try:
+        with open(file_path, "rb") as f:
+            data = f.read()
+        return base64.b64encode(data).decode("utf-8")
+    except Exception as e:
+        logger.error(f"Error loading audio file for base64 encoding: {e}")
+        return ""
+
 def run_dashboard():
     # Page settings
     st.set_page_config(
@@ -342,6 +357,16 @@ def run_dashboard():
         st.session_state.session_id = None
         st.session_state.ear_history = deque([0.28] * 100, maxlen=100)
         st.session_state.mar_history = deque([0.15] * 100, maxlen=100)
+        
+    # Audio and Speech state variables
+    if "audio_state" not in st.session_state:
+        st.session_state.audio_state = "safe"
+    if "last_warning_trigger" not in st.session_state:
+        st.session_state.last_warning_trigger = 0.0
+    if "speech_trigger" not in st.session_state:
+        st.session_state.speech_trigger = 0.0
+    if "last_speech_text" not in st.session_state:
+        st.session_state.last_speech_text = ""
 
     # Session Buttons
     col_start, col_stop = st.sidebar.columns(2)
@@ -365,6 +390,10 @@ def run_dashboard():
             notifier.close()
             st.rerun()
 
+    # Pre-load audio chimes as base64 for browser HTML5 playback
+    warning_b64 = load_audio_base64(config.sound_warning_chime)
+    critical_b64 = load_audio_base64(config.sound_critical_alarm)
+
     # Main layout division
     col_left, col_right = st.columns([7, 5])
 
@@ -372,6 +401,7 @@ def run_dashboard():
         # Placeholders for dynamic loop updates
         video_placeholder = st.empty()
         chart_placeholder = st.empty()
+        audio_placeholder = st.empty()
         
     with col_right:
         cards_placeholder = st.empty()
@@ -413,6 +443,79 @@ def run_dashboard():
                         score = ctx.video_processor.last_score
                         risk_level = ctx.video_processor.last_level
                     
+                    # Process audio alerts & speech synthesis in the browser via hidden iframe
+                    am = ctx.video_processor.notifier.audio_manager
+                    vm = ctx.video_processor.notifier.voice
+                    
+                    trigger_warning = False
+                    if am.play_warning_requested:
+                        st.session_state.last_warning_trigger = time.time()
+                        am.play_warning_requested = False
+                        trigger_warning = True
+                        
+                    if am.play_critical_requested:
+                        active_audio = "critical"
+                    elif trigger_warning or (time.time() - st.session_state.get("last_warning_trigger", 0.0) < 1.5):
+                        active_audio = "warning"
+                    else:
+                        active_audio = "safe"
+                        
+                    trigger_speech = False
+                    speech_text = ""
+                    if vm.speech_requested:
+                        st.session_state.last_speech_trigger = time.time()
+                        st.session_state.last_speech_text = vm.speech_to_play
+                        vm.speech_requested = False
+                        trigger_speech = True
+                        speech_text = st.session_state.last_speech_text
+                        
+                    current_audio_state = st.session_state.get("audio_state", "safe")
+                    current_speech_trigger = st.session_state.get("speech_trigger", 0.0)
+                    
+                    new_audio_state = active_audio
+                    new_speech_trigger = st.session_state.last_speech_trigger if trigger_speech else current_speech_trigger
+                    
+                    if (new_audio_state != current_audio_state) or trigger_speech or trigger_warning:
+                        st.session_state.audio_state = new_audio_state
+                        st.session_state.speech_trigger = new_speech_trigger
+                        
+                        if new_audio_state == "safe" and not trigger_speech:
+                            audio_placeholder.empty()
+                        else:
+                            play_critical_js = "true" if new_audio_state == "critical" else "false"
+                            play_warning_js = "true" if (new_audio_state == "warning" and trigger_warning) else "false"
+                            speak_js = "true" if trigger_speech else "false"
+                            speech_escaped = speech_text.replace('"', '\\"') if speech_text else ""
+                            
+                            iframe_content = f"""
+                            <html>
+                            <head><title>Driver Safety Audio Context</title></head>
+                            <body>
+                            <script>
+                                // Audio Alerts
+                                if ({play_critical_js}) {{
+                                    var audio = new Audio("data:audio/wav;base64,{critical_b64}");
+                                    audio.loop = true;
+                                    audio.play().catch(e => console.log("Critical alarm blocked:", e));
+                                }}
+                                if ({play_warning_js}) {{
+                                    var audio = new Audio("data:audio/wav;base64,{warning_b64}");
+                                    audio.play().catch(e => console.log("Warning chime blocked:", e));
+                                }}
+                                // Speech Synthesis
+                                if ({speak_js}) {{
+                                    var msg = new SpeechSynthesisUtterance("{speech_escaped}");
+                                    msg.volume = {alert_volume};
+                                    msg.rate = {config.tts_rate} / 150.0;
+                                    window.speechSynthesis.speak(msg);
+                                }}
+                            </script>
+                            </body>
+                            </html>
+                            """
+                            with audio_placeholder:
+                                st.components.v1.html(iframe_content, height=0, width=0)
+
                     # Update deque history for Plotly visualizations
                     st.session_state.ear_history.append(ear)
                     st.session_state.mar_history.append(mar)
@@ -465,6 +568,11 @@ def run_dashboard():
                 st.error(f"UI update thread interrupted: {e}")
             finally:
                 notifier.close()
+                st.session_state.audio_state = "safe"
+                st.session_state.last_warning_trigger = 0.0
+                st.session_state.last_speech_trigger = 0.0
+                st.session_state.last_speech_text = ""
+                audio_placeholder.empty()
         else:
             video_placeholder.info("📺 Camera stream is offline. Please click 'Start' in the WebRTC stream controller below to begin active monitoring.")
             

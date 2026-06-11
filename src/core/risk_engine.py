@@ -54,10 +54,10 @@ class RiskEngine:
         }
 
         # 1. Eye Closure check (duration-based)
-        if closure_duration >= 3.0:
+        if closure_duration >= 2.0:
             score += 4 # Triggers Danger/Critical continuous alarm
             indicators["eye_closure"] = True
-        elif closure_duration >= 1.5:
+        elif closure_duration >= 1.0:
             score += 2 # Triggers Warning chime + voice reminder
             indicators["eye_closure"] = True
 
@@ -70,15 +70,15 @@ class RiskEngine:
             indicators["yawn"] = True
 
         # 3. Head Drop check
-        if head_down_duration >= 3.0:
+        if head_down_duration >= 2.0:
             score += 4 # Triggers Danger/Critical continuous alarm
             indicators["head_drop"] = True
-        elif head_down_duration >= 1.5:
+        elif head_down_duration >= 1.0:
             score += 2 # Triggers Warning chime + voice reminder
             indicators["head_drop"] = True
 
         # 4. Horizontal gaze distraction check
-        if yaw_distraction_duration >= 25.0:
+        if yaw_distraction_duration >= 7.0:
             score += 4 # Triggers Danger/Critical continuous alarm
             indicators["distraction"] = True
         elif yaw_distraction_duration >= 3.0:

@@ -44,6 +44,18 @@ class NotificationService:
         self.last_voice_alert_time = 0.0
         self.voice_alert_cooldown = 8.0 # Seconds before speaking another warning
 
+    def reset(self):
+        """Resets the notification service state for a new session."""
+        self.eye_closed_alarm_active = False
+        self.eye_closed_alarm_count = 0
+        self.current_level = self.LEVEL_0_NONE
+        self.critical_start_time = None
+        self.emergency_email_dispatched = False
+        self.last_voice_alert_time = 0.0
+        self.audio.stop_all()
+        self.voice.stop()
+        logger.info("NotificationService: State successfully reset.")
+
     def process_risk_state(
         self,
         driver_name: str,
@@ -154,6 +166,22 @@ class NotificationService:
                 if not self.emergency_email_dispatched:
                     logger.warn("NotificationService: Critical threshold exceeded! Dispatching Level 4 Emergency Email.")
                     
+                    screenshot_path = None
+                    logger.info(f"NotificationService: Emergency email capture check: frame is not None: {frame is not None}, session_id: {session_id}, self.evidence is not None: {self.evidence is not None}")
+                    if frame is not None and session_id is not None and self.evidence is not None:
+                        try:
+                            screenshot_path = self.evidence.capture_evidence(
+                                frame=frame,
+                                session_id=session_id,
+                                event_type="EMERGENCY_ALARM",
+                                ear_value=ear,
+                                mar_value=mar,
+                                risk_level="Critical",
+                                force=True
+                            )
+                        except Exception as sc_err:
+                            logger.error(f"NotificationService: Error capturing emergency screenshot: {sc_err}")
+                            
                     details = f"""
                     ALERT STATE TRIGGER METRICS:
                     - EAR Value:       {ear:.3f}
@@ -167,7 +195,8 @@ class NotificationService:
                     self.email.send_emergency_alert(
                         driver_name=driver_name,
                         risk_level="Critical Emergency",
-                        details=details
+                        details=details,
+                        image_path=str(screenshot_path) if screenshot_path else None
                     )
                     self.emergency_email_dispatched = True
 
@@ -195,6 +224,7 @@ class NotificationService:
                 logger.error(f"NotificationService: Error querying 4th alarm stats: {db_err}")
                 
         screenshot_path = None
+        logger.info(f"NotificationService: 4th alarm email capture check: frame is not None: {frame is not None}, session_id: {session_id}, self.evidence is not None: {self.evidence is not None}")
         if frame is not None and session_id is not None and self.evidence is not None:
             try:
                 screenshot_path = self.evidence.capture_evidence(

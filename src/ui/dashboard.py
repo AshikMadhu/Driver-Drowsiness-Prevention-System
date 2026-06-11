@@ -158,6 +158,26 @@ class DriverSafetyVideoProcessor(VideoProcessorBase):
         self.session_id = None
         self.username = "default_driver"
 
+    def reset(self, ear_th, mar_th, gaze_th):
+        """Resets the internal detectors and histories to default values."""
+        with self.lock:
+            self.eye_dec = EyeDetector(ear_threshold=ear_th)
+            self.yawn_dec = YawnDetector(mar_threshold=mar_th)
+            self.pose_dec = HeadPoseDetector(deviation_threshold=gaze_th)
+            self.risk_engine = RiskEngine(
+                window_size=10, 
+                head_drop_threshold=-12.0, 
+                distraction_threshold=gaze_th
+            )
+            self.last_ear = 0.28
+            self.last_mar = 0.12
+            self.last_pitch = 0.0
+            self.last_yaw = 0.0
+            self.last_roll = 0.0
+            self.last_score = 0
+            self.last_level = "Safe"
+            logger.info("DriverSafetyVideoProcessor: Internal detectors and history successfully reset.")
+
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
         try:
             img = frame.to_ndarray(format="bgr24")
@@ -414,11 +434,13 @@ def run_dashboard():
             state_mgr.initialize_driver(username)
             session_id = state_mgr.start_session()
             if session_id:
+                notifier.reset()
                 st.session_state.active_session = True
                 st.session_state.session_id = session_id
                 st.session_state.start_time = time.time()
                 st.session_state.ear_history.clear()
                 st.session_state.mar_history.clear()
+                st.session_state.webrtc_reset_done = False
                 st.rerun()
                 
     with col_stop:
@@ -430,8 +452,10 @@ def run_dashboard():
                     logger.error(f"Error stopping local cam_mgr: {ex}")
                 st.session_state.cam_mgr = None
             state_mgr.end_session()
+            notifier.reset()
             st.session_state.active_session = False
             st.session_state.session_id = None
+            st.session_state.webrtc_reset_done = False
             notifier.close()
             st.rerun()
 
@@ -517,6 +541,10 @@ def run_dashboard():
                 )
             
             if ctx.state.playing:
+                if "webrtc_reset_done" not in st.session_state or not st.session_state.webrtc_reset_done:
+                    ctx.video_processor.reset(ear_threshold, mar_threshold, gaze_threshold)
+                    st.session_state.webrtc_reset_done = True
+                    
                 ctx.video_processor.session_id = st.session_state.session_id
                 ctx.video_processor.username = username
                 
@@ -564,7 +592,20 @@ def run_dashboard():
                             st.session_state.speech_trigger = new_speech_trigger
                             
                             if new_audio_state == "safe" and not trigger_speech:
-                                audio_placeholder.empty()
+                                iframe_content = """
+                                <html>
+                                <head><title>Stop Audio</title></head>
+                                <body>
+                                <script>
+                                    if (window.speechSynthesis) {
+                                        window.speechSynthesis.cancel();
+                                    }
+                                </script>
+                                </body>
+                                </html>
+                                """
+                                with audio_placeholder:
+                                    st.components.v1.html(iframe_content, height=0, width=0)
                             else:
                                 play_critical_js = "true" if new_audio_state == "critical" else "false"
                                 play_warning_js = "true" if (new_audio_state == "warning" and trigger_warning) else "false"
@@ -647,7 +688,20 @@ def run_dashboard():
                         st.session_state.last_warning_trigger = 0.0
                         st.session_state.last_speech_trigger = 0.0
                         st.session_state.last_speech_text = ""
-                        audio_placeholder.empty()
+                        iframe_content = """
+                        <html>
+                        <head><title>Stop Audio</title></head>
+                        <body>
+                        <script>
+                            if (window.speechSynthesis) {
+                                window.speechSynthesis.cancel();
+                            }
+                        </script>
+                        </body>
+                        </html>
+                        """
+                        with audio_placeholder:
+                            st.components.v1.html(iframe_content, height=0, width=0)
             else:
                 video_placeholder.info("📺 Camera stream is offline. Please click 'Start' in the WebRTC stream controller below to begin active monitoring.")
         
@@ -781,7 +835,20 @@ def run_dashboard():
                         st.session_state.speech_trigger = new_speech_trigger
                         
                         if new_audio_state == "safe" and not trigger_speech:
-                            audio_placeholder.empty()
+                            iframe_content = """
+                            <html>
+                            <head><title>Stop Audio</title></head>
+                            <body>
+                            <script>
+                                if (window.speechSynthesis) {
+                                    window.speechSynthesis.cancel();
+                                }
+                            </script>
+                            </body>
+                            </html>
+                            """
+                            with audio_placeholder:
+                                st.components.v1.html(iframe_content, height=0, width=0)
                         else:
                             play_critical_js = "true" if new_audio_state == "critical" else "false"
                             play_warning_js = "true" if (new_audio_state == "warning" and trigger_warning) else "false"
@@ -875,10 +942,39 @@ def run_dashboard():
                     st.session_state.last_warning_trigger = 0.0
                     st.session_state.last_speech_trigger = 0.0
                     st.session_state.last_speech_text = ""
-                    audio_placeholder.empty()
+                    iframe_content = """
+                    <html>
+                    <head><title>Stop Audio</title></head>
+                    <body>
+                    <script>
+                        if (window.speechSynthesis) {
+                            window.speechSynthesis.cancel();
+                        }
+                    </script>
+                    </body>
+                    </html>
+                    """
+                    with audio_placeholder:
+                        st.components.v1.html(iframe_content, height=0, width=0)
             
     # --- OFFLINE / SUMMARY VIEW DISPLAY ---
     else:
+        # Clean up any leftover audio/speech inside the browser
+        iframe_content = """
+        <html>
+        <head><title>Stop Audio</title></head>
+        <body>
+        <script>
+            if (window.speechSynthesis) {
+                window.speechSynthesis.cancel();
+            }
+        </script>
+        </body>
+        </html>
+        """
+        with audio_placeholder:
+            st.components.v1.html(iframe_content, height=0, width=0)
+            
         # Display instruction banner
         video_placeholder.info("📺 Camera Feed Offline. Click 'Start Monitor' in the sidebar to activate the video scanner.")
         # Display historical analysis charts and tables from SQLite

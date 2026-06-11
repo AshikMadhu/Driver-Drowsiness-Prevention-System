@@ -673,11 +673,13 @@ def run_dashboard():
                     distraction_threshold=gaze_threshold
                 )
                 
+                frame_counter = 0
                 while st.session_state.active_session:
                     ret, frame = cam_mgr.read()
                     if not ret or frame is None:
                         time.sleep(0.01)
                         continue
+                    frame_counter += 1
                         
                     h, w, _ = frame.shape
                     
@@ -813,39 +815,40 @@ def run_dashboard():
                             with audio_placeholder:
                                 st.components.v1.html(iframe_content, height=0, width=0)
                     
-                    fig = create_realtime_metrics_plot(
-                        list(st.session_state.ear_history),
-                        list(st.session_state.mar_history),
-                        ear_threshold,
-                        mar_threshold
-                    )
-                    chart_placeholder.plotly_chart(fig, use_container_width=True, key=f"trend_chart_{time.time()}")
-                    
-                    session_time = time.time() - st.session_state.start_time
-                    mins, secs = divmod(int(session_time), 60)
-                    duration_str = f"{mins:02d}:{secs:02d}"
-                    
-                    pred_res = pred_service.evaluate_session_fatigue(st.session_state.session_id)
-                    fatigue_prob = pred_res["fatigue_probability"]
-                    pred_label = pred_res["prediction_label"]
-                    
-                    with cards_placeholder.container():
-                        st.markdown(render_risk_card(risk_level), unsafe_allow_html=True)
+                    if frame_counter % 10 == 0:
+                        fig = create_realtime_metrics_plot(
+                            list(st.session_state.ear_history),
+                            list(st.session_state.mar_history),
+                            ear_threshold,
+                            mar_threshold
+                        )
+                        chart_placeholder.plotly_chart(fig, use_container_width=True, key=f"trend_chart_{time.time()}")
                         
-                        mc1, mc2, mc3 = st.columns(3)
-                        with mc1:
-                            st.markdown(render_styled_card("Risk Score", f"{raw_score} / 6", "Maximum: 6"), unsafe_allow_html=True)
-                        with mc2:
-                            prob_pct = f"{fatigue_prob * 100:.0f}%"
-                            theme = "red" if fatigue_prob > 0.5 else "green"
-                            st.markdown(render_styled_card("Fatigue Forecast", prob_pct, f"ML Status: {pred_label}", theme), unsafe_allow_html=True)
-                        with mc3:
-                            st.markdown(render_styled_card("Session Timer", duration_str, "Active Monitoring"), unsafe_allow_html=True)
+                        session_time = time.time() - st.session_state.start_time
+                        mins, secs = divmod(int(session_time), 60)
+                        duration_str = f"{mins:02d}:{secs:02d}"
+                        
+                        pred_res = pred_service.evaluate_session_fatigue(st.session_state.session_id)
+                        fatigue_prob = pred_res["fatigue_probability"]
+                        pred_label = pred_res["prediction_label"]
+                        
+                        with cards_placeholder.container():
+                            st.markdown(render_risk_card(risk_level), unsafe_allow_html=True)
                             
-                    emergency_placeholder.markdown(
-                        render_emergency_status_card(notifier.emergency_email_dispatched),
-                        unsafe_allow_html=True
-                    )
+                            mc1, mc2, mc3 = st.columns(3)
+                            with mc1:
+                                st.markdown(render_styled_card("Risk Score", f"{raw_score} / 6", "Maximum: 6"), unsafe_allow_html=True)
+                            with mc2:
+                                prob_pct = f"{fatigue_prob * 100:.0f}%"
+                                theme = "red" if fatigue_prob > 0.5 else "green"
+                                st.markdown(render_styled_card("Fatigue Forecast", prob_pct, f"ML Status: {pred_label}", theme), unsafe_allow_html=True)
+                            with mc3:
+                                st.markdown(render_styled_card("Session Timer", duration_str, "Active Monitoring"), unsafe_allow_html=True)
+                                
+                        emergency_placeholder.markdown(
+                            render_emergency_status_card(notifier.emergency_email_dispatched),
+                            unsafe_allow_html=True
+                        )
                     
                     time.sleep(0.033)
                     

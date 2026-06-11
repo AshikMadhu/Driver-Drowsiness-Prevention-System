@@ -21,11 +21,11 @@ class HeadPoseDetector:
         # 6. Right Mouth Corner (index 5) -> (-150, -150, -125)
         self.model_points = np.array([
             (0.0, 0.0, 0.0),             # Nose tip
-            (0.0, 330.0, -65.0),         # Chin
-            (225.0, -170.0, -135.0),     # Left Eye Outer Corner
-            (-225.0, -170.0, -135.0),    # Right Eye Outer Corner
-            (150.0, 150.0, -125.0),      # Left Mouth Corner
-            (-150.0, 150.0, -125.0)      # Right Mouth Corner
+            (0.0, 330.0, 65.0),          # Chin
+            (225.0, -170.0, 135.0),      # Left Eye Outer Corner
+            (-225.0, -170.0, 135.0),     # Right Eye Outer Corner
+            (150.0, 150.0, 125.0),       # Left Mouth Corner
+            (-150.0, 150.0, 125.0)       # Right Mouth Corner
         ], dtype=np.float32)
 
     def estimate_pose(self, head_pose_points: List[Tuple[int, int]], img_width: int, img_height: int) -> Optional[Dict[str, Any]]:
@@ -92,9 +92,38 @@ class HeadPoseDetector:
             yaw = y * 180.0 / np.pi
             roll = z * 180.0 / np.pi
             
-            # Project a 3D point (500mm out from the nose tip) onto the 2D plane to draw a direction vector
-            # The 3D line runs from nose tip (0,0,0) to (0,0,150) or (0,0,500)
-            # A 250-300mm length is standard for clean visualization
+            is_mirrored = False
+            # Check if the result is flipped (upside down / rolled 180 degrees)
+            if abs(pitch) > 90.0 or abs(roll) > 90.0:
+                is_mirrored = True
+                # The coordinates are likely mirrored. Let's flip the X-coordinates and solve again!
+                image_points_mirrored = image_points.copy()
+                image_points_mirrored[:, 0] = img_width - image_points_mirrored[:, 0]
+                
+                success, rvec, tvec = cv2.solvePnP(
+                    self.model_points, 
+                    image_points_mirrored, 
+                    camera_matrix, 
+                    dist_coeffs, 
+                    flags=cv2.SOLVEPNP_ITERATIVE
+                )
+                if success:
+                    R, _ = cv2.Rodrigues(rvec)
+                    sy = np.sqrt(R[0, 0] * R[0, 0] + R[1, 0] * R[1, 0])
+                    singular = sy < 1e-6
+                    if not singular:
+                        x = np.arctan2(R[2, 1], R[2, 2])
+                        y = np.arctan2(-R[2, 0], sy)
+                        z = np.arctan2(R[1, 0], R[0, 0])
+                    else:
+                        x = np.arctan2(-R[1, 2], R[1, 1])
+                        y = np.arctan2(-R[2, 0], sy)
+                        z = 0.0
+                    pitch = x * 180.0 / np.pi
+                    yaw = y * 180.0 / np.pi
+                    roll = z * 180.0 / np.pi
+            
+            # Project a 3D point (250mm out from the nose tip) onto the 2D plane to draw a direction vector
             nose_end_point3D = np.array([(0.0, 0.0, 250.0)], dtype=np.float32)
             (nose_end_point2D, _) = cv2.projectPoints(
                 nose_end_point3D, 
@@ -105,8 +134,15 @@ class HeadPoseDetector:
             )
             
             # Convert projected coordinate to integer coordinate tuple
-            p1 = (int(image_points[0][0]), int(image_points[0][1])) # nose tip center
-            p2 = (int(nose_end_point2D[0][0][0]), int(nose_end_point2D[0][0][1])) # nose projected tip
+            p1 = (int(head_pose_points[0][0]), int(head_pose_points[0][1])) # Original nose tip in image space
+            p2_x = int(nose_end_point2D[0][0][0])
+            p2_y = int(nose_end_point2D[0][0][1])
+            
+            if is_mirrored:
+                # Mirror the projected X coordinate back so it aligns with the mirrored frame display
+                p2_x = int(img_width - p2_x)
+                
+            p2 = (p2_x, p2_y)
             
             # Check deviation (distraction)
             # If absolute pitch or absolute yaw exceeds threshold, driver is looking away

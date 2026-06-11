@@ -376,6 +376,24 @@ def run_dashboard():
     if not predictor.models_loaded:
         st.sidebar.caption("Run 'python train_model.py' to calibrate ML weights.")
     
+    # Active Email Provider Status
+    email_service = sys_components["email_service"]
+    active_prov = getattr(email_service, "active_provider", "SMTP")
+    email_status = getattr(email_service, "status", "Disconnected")
+    
+    if email_status == "Connected":
+        status_color = "#34C759"  # Neon Green
+    elif email_status == "Failed":
+        status_color = "#FF3B30"  # Neon Red
+    else:
+        status_color = "#FFCC00"  # Yellow for Pending/Disconnected
+        
+    st.sidebar.markdown(f"**Email Provider**: `{active_prov}`")
+    st.sidebar.markdown(
+        f"**Email Status**: <span style='color: {status_color}; font-weight: bold;'>● {email_status}</span>", 
+        unsafe_allow_html=True
+    )
+    
     # Camera configuration selectbox
     st.sidebar.markdown("---")
     st.sidebar.markdown("#### 📺 Camera Input Source")

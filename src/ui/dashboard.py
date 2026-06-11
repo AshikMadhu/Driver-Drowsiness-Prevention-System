@@ -410,10 +410,23 @@ def run_dashboard():
 
     # --- RUN WEBCAM ACTIVE MONITORING VIA WEBRTC ---
     if st.session_state.active_session:
-        # RTC configuration using a public Google STUN server
-        RTC_CONFIGURATION = RTCConfiguration(
-            {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
-        )
+        # RTC configuration supporting dynamic TURN server fallback for cloud containers
+        import os
+        turn_url = os.getenv("TURN_URL", "")
+        turn_username = os.getenv("TURN_USERNAME", "")
+        turn_password = os.getenv("TURN_PASSWORD", "")
+        
+        ice_servers = [
+            {"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302"]}
+        ]
+        if turn_url and turn_username and turn_password:
+            ice_servers.append({
+                "urls": [turn_url],
+                "username": turn_username,
+                "credential": turn_password
+            })
+            
+        RTC_CONFIGURATION = RTCConfiguration({"iceServers": ice_servers})
         
         with col_left:
             # We display the WebRTC streamer widget directly inside the left column

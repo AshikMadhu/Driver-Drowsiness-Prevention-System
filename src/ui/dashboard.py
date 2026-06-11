@@ -419,9 +419,34 @@ def run_dashboard():
         ice_servers = [
             {"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302"]}
         ]
-        if turn_url and turn_username and turn_password:
+        
+        if turn_username and turn_password:
+            urls = []
+            if turn_url:
+                # Clean up host if user pasted raw hostname
+                clean_url = turn_url
+                if not clean_url.startswith("turn:") and not clean_url.startswith("turns:"):
+                    clean_url = f"turn:{clean_url}"
+                if ":" not in clean_url[6:]:
+                    clean_url = f"{clean_url}:443"
+                
+                urls.append(clean_url)
+                if "transport=tcp" not in clean_url:
+                    sep = "&" if "?" in clean_url else "?"
+                    urls.append(f"{clean_url}{sep}transport=tcp")
+                if clean_url.startswith("turn:") and "443" in clean_url:
+                    urls.append(clean_url.replace("turn:", "turns:"))
+            else:
+                # Default fallback list for Metered.ca standard configurations
+                urls.extend([
+                    "turn:global.metered.ca:80?transport=tcp",
+                    "turn:global.metered.ca:443?transport=tcp",
+                    "turns:global.metered.ca:443?transport=tcp",
+                    "turn:global.metered.ca:8678"
+                ])
+                
             ice_servers.append({
-                "urls": [turn_url],
+                "urls": urls,
                 "username": turn_username,
                 "credential": turn_password
             })

@@ -469,7 +469,7 @@ Calculates head rotation relative to the camera coordinate system:
 
 ---
 
-## 🎓 Internship Viva Preparation (Top 50 Q&A)
+## 🎓  Top 50 Q&A
 
 ### Project Overview & Rationale
 

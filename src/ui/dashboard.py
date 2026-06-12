@@ -394,6 +394,18 @@ def run_dashboard():
         unsafe_allow_html=True
     )
     
+    # Visible diagnostics for troubleshooting
+    last_status = getattr(email_service, "last_status", "Never Sent")
+    last_ts = getattr(email_service, "last_timestamp", "N/A")
+    last_prov = getattr(email_service, "last_provider", "N/A")
+    last_code = getattr(email_service, "last_response_code", "N/A")
+    
+    st.sidebar.caption("Last Email Diagnostics:")
+    st.sidebar.markdown(f"**Status**: `{last_status}`")
+    st.sidebar.markdown(f"**Timestamp**: `{last_ts}`")
+    st.sidebar.markdown(f"**Provider**: `{last_prov}`")
+    st.sidebar.markdown(f"**Response Code**: `{last_code}`")
+    
     # Camera configuration selectbox
     st.sidebar.markdown("---")
     st.sidebar.markdown("#### 📺 Camera Input Source")

@@ -87,10 +87,10 @@ The system addresses these issues through a high-frequency, multi-threaded pipel
 * **Why it exists**: Provides immediate acoustic warnings.
 * **How it works**: Uses the low-latency `pygame.mixer` to play PCM WAV sounds.
 
-### 8. SMTP Email Emergency Escalation
-* **What it does**: Dispatches emergency alerts to contacts.
-* **Why it exists**: Notifies fleet managers or families in critical scenarios.
-* **How it works**: Sends text and screenshot attachments to `ashiksjc2025@gmail.com` using secure SMTP on the 4th repeat alarm.
+### 8. Hybrid Email Emergency Escalation
+* **What it does**: Dispatches emergency alerts with embedded telemetry and base64/MIME screenshot attachments to contacts.
+* **Why it exists**: Notifies fleet managers or families in critical scenarios when local alarms are ignored.
+* **How it works**: Employs a dual-channel hybrid architecture: standard secure SMTP for local development, and HTTPS REST APIs (Resend/SendGrid) for cloud platforms (such as Hugging Face Spaces) where outbound SMTP ports are blocked. Automatically routes to `workzflow32@gmail.com` under Resend sandbox constraints.
 
 ### 9. Interactive Web Dashboard
 * **What it does**: Renders a dark-themed monitoring interface.
@@ -205,11 +205,21 @@ Copy the template configuration file:
 
 Open the newly created `.env` file and configure your email alerts:
 ```env
+# --- SMTP Configuration (Local Development) ---
 SMTP_SERVER=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USERNAME=your_gmail_address@gmail.com
 SMTP_PASSWORD=your_16_character_google_app_password
-EMERGENCY_RECEIVER_EMAIL=ashiksjc2025@gmail.com
+
+# --- Cloud API Configuration (Hugging Face Spaces) ---
+# Paste your Resend or SendGrid API key here to bypass outbound port restrictions
+RESEND_API_KEY=re_your_resend_api_key
+SENDGRID_API_KEY=sg_your_sendgrid_api_key
+
+# --- Recipient Address Configuration ---
+# NOTE: If using Resend sandbox (onboarding@resend.dev), this recipient MUST match 
+# the email address registered with your Resend account (e.g. workzflow32@gmail.com)
+EMERGENCY_RECEIVER_EMAIL=workzflow32@gmail.com
 ```
 
 ---

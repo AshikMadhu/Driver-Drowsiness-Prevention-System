@@ -1,6 +1,7 @@
 import os
 import smtplib
 import threading
+import time
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
@@ -16,9 +17,16 @@ class EmailService:
         self.smtp_port = int(os.getenv("SMTP_PORT", "587"))
         self.smtp_username = os.getenv("SMTP_USERNAME", "")
         self.smtp_password = os.getenv("SMTP_PASSWORD", "")
-        self.receiver_email = os.getenv("EMERGENCY_RECEIVER_EMAIL", "ashiksjc2025@gmail.com")
+        # Fallback recipient set to Resend sandbox account owner
+        self.receiver_email = os.getenv("EMERGENCY_RECEIVER_EMAIL", "workzflow32@gmail.com")
         self.resend_api_key = os.getenv("RESEND_API_KEY", "")
         self.sendgrid_api_key = os.getenv("SENDGRID_API_KEY", "")
+
+        # Diagnostics properties for the dashboard
+        self.last_status = "Never Sent"
+        self.last_timestamp = "N/A"
+        self.last_provider = "N/A"
+        self.last_response_code = "N/A"
 
         # Environment Auto-Detection
         if self.resend_api_key:
@@ -43,13 +51,10 @@ class EmailService:
             if self.active_provider in ["RESEND", "SENDGRID"]:
                 import requests
                 url = "https://api.resend.com" if self.active_provider == "RESEND" else "https://api.sendgrid.com"
-                # Reachability check (HEAD request to the endpoint)
                 r = requests.head(url, timeout=3.0)
-                # Even if it gives 404 or 405, it means port 443 is open and server is reachable
                 self.status = "Connected"
                 logger.info(f"EmailService: Connectivity test to {self.active_provider} succeeded.")
             else:
-                # SMTP connection test
                 import socket
                 logger.info(f"EmailService: Testing SMTP connection to {self.smtp_server}:{self.smtp_port}...")
                 s = socket.create_connection((self.smtp_server, self.smtp_port), timeout=3.0)
@@ -60,7 +65,7 @@ class EmailService:
             logger.warning(f"EmailService: Connectivity check failed for {self.active_provider}: {e}")
             self.status = "Failed"
             
-            # Failover checking on startup: if SMTP fails and an API key is available, fall back
+            # Fallback checking on startup
             if self.active_provider == "SMTP" and (self.resend_api_key or self.sendgrid_api_key):
                 self.active_provider = "RESEND" if self.resend_api_key else "SENDGRID"
                 logger.info(f"EmailService: SMTP failed connection on startup. Falling back to {self.active_provider} API.")
@@ -75,8 +80,9 @@ class EmailService:
 
     def _send_email_via_smtp(self, driver_name: str, risk_level: str, details: str, image_path: str, subject: str, recipient: str) -> bool:
         """Sends email synchronously using SMTP library."""
+        self.last_provider = "SMTP"
+        self.last_timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
         try:
-            import time
             msg = MIMEMultipart()
             msg['From'] = self.smtp_username
             msg['To'] = recipient
@@ -117,19 +123,26 @@ class EmailService:
             server.login(self.smtp_username, self.smtp_password)
             server.sendmail(self.smtp_username, recipient, msg.as_string())
             server.quit()
+            
             logger.info("EmailService: SMTP email dispatch successful.")
+            self.last_status = "Success"
+            self.last_response_code = "250 OK"
             return True
         except Exception as e:
             logger.error(f"EmailService: SMTP email dispatch failed: {e}")
             import traceback
             logger.error(traceback.format_exc())
+            self.last_status = "Failed"
+            self.last_response_code = f"Error: {str(e)[:30]}"
             return False
 
     def _send_email_via_resend(self, driver_name: str, risk_level: str, details: str, image_path: str, subject: str, recipient: str) -> bool:
         """Sends email synchronously using Resend API (HTTPS)."""
         import requests
         import base64
-        import time
+        
+        self.last_provider = "RESEND"
+        self.last_timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
         
         url = "https://api.resend.com/emails"
         headers = {
@@ -178,23 +191,41 @@ class EmailService:
         try:
             logger.info("EmailService: Dispatching email via Resend API (HTTPS)...")
             r = requests.post(url, json=payload, headers=headers, timeout=10.0)
+            
+            logger.info(f"EmailService: Resend API response code: {r.status_code}")
+            logger.info(f"EmailService: Resend API response body: {r.text}")
+            
+            self.last_response_code = str(r.status_code)
+            
             if r.status_code in [200, 201, 202]:
-                logger.info("EmailService: Direct Resend API dispatch successful.")
+                try:
+                    resp_json = r.json()
+                    msg_id = resp_json.get("id", "Unknown ID")
+                    logger.info(f"EmailService: Direct Resend API dispatch successful. Message ID: {msg_id}")
+                    self.last_response_code = f"{r.status_code} (ID: {msg_id[:8]})"
+                except Exception:
+                    logger.info("EmailService: Direct Resend API dispatch successful.")
+                self.last_status = "Success"
                 return True
             else:
                 logger.error(f"EmailService: Resend API returned status code {r.status_code}: {r.text}")
+                self.last_status = "Failed"
                 return False
         except Exception as e:
             logger.error(f"EmailService: Resend API post failed: {e}")
             import traceback
             logger.error(traceback.format_exc())
+            self.last_status = "Failed"
+            self.last_response_code = f"Error: {str(e)[:30]}"
             return False
 
     def _send_email_via_sendgrid(self, driver_name: str, risk_level: str, details: str, image_path: str, subject: str, recipient: str) -> bool:
         """Sends email synchronously using SendGrid API (HTTPS)."""
         import requests
         import base64
-        import time
+        
+        self.last_provider = "SENDGRID"
+        self.last_timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
         
         url = "https://api.sendgrid.com/v3/mail/send"
         headers = {
@@ -246,16 +277,26 @@ class EmailService:
         try:
             logger.info("EmailService: Dispatching email via SendGrid API (HTTPS)...")
             r = requests.post(url, json=payload, headers=headers, timeout=10.0)
+            
+            logger.info(f"EmailService: SendGrid API response code: {r.status_code}")
+            logger.info(f"EmailService: SendGrid API response body: {r.text}")
+            
+            self.last_response_code = str(r.status_code)
+            
             if r.status_code in [200, 201, 202]:
                 logger.info("EmailService: SendGrid API dispatch successful.")
+                self.last_status = "Success"
                 return True
             else:
                 logger.error(f"EmailService: SendGrid API returned status code {r.status_code}: {r.text}")
+                self.last_status = "Failed"
                 return False
         except Exception as e:
             logger.error(f"EmailService: SendGrid API post failed: {e}")
             import traceback
             logger.error(traceback.format_exc())
+            self.last_status = "Failed"
+            self.last_response_code = f"Error: {str(e)[:30]}"
             return False
 
     def _send_email_sync(self, driver_name: str, risk_level: str, details: str, image_path: str = None, subject: str = None, receiver: str = None):
@@ -286,6 +327,10 @@ class EmailService:
                     logger.error("EmailService: SMTP failed and no HTTP API keys (Resend/SendGrid) are available for failover.")
         else:
             logger.warning(f"EmailService: Configurations are incomplete for active provider {self.active_provider}. Dispatch bypassed.")
+            self.last_status = "Failed"
+            self.last_response_code = "Incomplete Config"
+            self.last_provider = self.active_provider
+            self.last_timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
             
         if success:
             self.status = "Connected"
